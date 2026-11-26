@@ -1,6 +1,6 @@
 # seaworthy — Design
 
-Status: draft for approval · 2026-11-26 · Author: Stanislav
+Status: approved (rev 2: builder-check answers, adversarial threat model) · 2026-11-26 · Author: Stanislav
 
 ## 1. Intent
 
@@ -26,7 +26,8 @@ entry point into the Orca ecosystem (stablyai/orca, an IDE for parallel coding a
 
 1. One command takes a task (or the developer's existing uncommitted work) to green CI:
    `/seaworthy:ship [task]`.
-2. Gates are enforced by code (Claude Code hooks, Orca hooks), not by instructions.
+2. Gates are enforced by code (Claude Code hooks, git hooks, Orca hooks), not by instructions,
+   and hold against an agent actively trying to bypass them (7.12), short of OS-level isolation.
 3. "Green" is bound to exact content: any edit after a passing check or approved review voids it.
 4. Test tampering (deleted tests, new skips, `@ts-ignore`, weakened lint/test/CI config) never
    lands without the developer's explicit approval.
@@ -133,7 +134,8 @@ All commands accept `--json`; all read/write state for the current worktree.
 | `detect` | Prints detected config without writing |
 | `check [--tier fast\|commit\|push] [--files …]` | Runs checks for the tier, records result bound to the tree fingerprint |
 | `guard` | Diff-guard of working tree vs session base; prints flagged items |
-| `start --task … / stop / state` | Session lifecycle and raw state |
+| `stop / state` | End the session (human-only, 7.12) / print raw state. Sessions start only via `/seaworthy:ship` (7.4) |
+| `request-approval <id>` / `approve <id>` / `waive <id>` | Agent asks; only the human approves (7.12) |
 | `hook <name>` | Entry point for every Claude Code hook (reads stdin JSON, answers per hook semantics) |
 | `ci find\|watch\|excerpt --sha <sha>` | Find the run for a commit, wait for it, produce a bounded, redacted failure excerpt |
 | `status` | Summary for humans / `--json` for Orca and the status line |
@@ -285,6 +287,53 @@ events)**, `auto` (stop only on guard events and escalation). Flag: `/seaworthy:
 5. Folder workspaces, remote hosts and worktrees without `.seaworthy.json` are shown as
    "not tracked", never errors.
 
+### 7.12 Threat model and hardening *(decided by the author: option "adversarial agent")*
+
+Within a session the agent is treated as an adversary that may try to reach "green" by going
+around the gates. It has Bash, Edit/Write and `seaworthy` on PATH. seaworthy raises the cost of
+every known bypass and detects tampering. It is **not a sandbox**: an agent with the developer's
+OS permissions can always do damage; for real isolation, run agents in a container or an Orca VM
+recipe. The README says so plainly.
+
+1. **Protected paths.** PreToolUse denies Edit/Write/MultiEdit/NotebookEdit on `.git/**`,
+   `.seaworthy.json`, `.github/workflows/**` (changes there go through guard approval instead),
+   the installed plugin directory and seaworthy's key file. For Bash, any command string that
+   references those paths together with a write operation (redirect, `tee`, `sed -i`, `mv`, `cp`,
+   `rm`, `truncate`, `chmod`, `ln`, interpreters given inline code) is denied.
+2. **Human-only commands.** `seaworthy approve <guard-id>`, `waive <finding-id>`, `stop` and
+   `allow-force-push` are denied when the agent runs them through Bash. The developer approves in
+   one of two ways: the `ask` permission prompt Claude Code shows when the agent requests an
+   approval through the dedicated `seaworthy request-approval <id>` command (the prompt shows the
+   exact guard item), or by running `seaworthy approve` in their own terminal.
+3. **Git write detection.** The PreToolUse Bash analyzer tokenizes the whole command (handling `;`,
+   `&&`, `||`, pipes, `$(…)`, backticks, `sh|bash|zsh -c`, `eval`, `env`, `xargs`, `git -C`,
+   `git -c alias.*=…`) and finds git write verbs: `commit`, `commit-tree`, `push`, `update-ref`,
+   `rebase`, `reset --hard`, `filter-branch`, `replace`, `notes`, `config` (for `core.hooksPath`,
+   `user.*`, `alias.*`). Only canonical forms pass to the commit/push gates; anything ambiguous or
+   unparseable that contains a git write verb is denied with a hint to use plain
+   `git commit -m …` / `git push`.
+4. **Git-level backstop.** `init` installs `pre-commit`, `commit-msg` and `pre-push` hooks that
+   chain to existing hooks (husky, lefthook, a custom `core.hooksPath` are respected). While a
+   session is active in that worktree they re-verify: fingerprint green for the tier, review
+   approved, no open guard events, allowed trailers only. Outside a session they pass through. So
+   a commit that slips past Claude Code's hooks is still refused by git, and `--no-verify` is denied
+   by item 3.
+5. **State integrity.** `state.json` carries an HMAC (SHA-256) keyed by a per-machine secret in
+   `${CLAUDE_PLUGIN_DATA}` (or `~/.config/seaworthy/key` for the CLI), which item 1 protects. A
+   state or config file that fails verification freezes the session in `escalated` and the report
+   says "state tampered". `.seaworthy.json` is hashed into the session at start; changing it
+   mid-session needs human approval.
+6. **Orca.** The opt-in `agent.tool.before` gate uses the same analyzer (`onError: "deny"`), so
+   Claude Code agents in Orca get the same protection even without the Claude Code plugin; for
+   other agents Orca only reports tool calls, so the git hooks are their backstop.
+7. **Red-team suite.** `test/redteam/` holds one case per bypass (target: ≥ 30, e.g. `sh -c` commit,
+   alias commit, editing state, swapping a check for `true`, deleting a test then re-adding it as a
+   skipped stub, writing a "passing" fake test runner, `git commit-tree` + `update-ref`,
+   `core.hooksPath` swap, trailer smuggling via `-F file`). Each case asserts the action is denied
+   or detected. The suite is part of CI and of the published story.
+
+Cost: about 3–4 extra days over the "sloppy agent" design.
+
 ## 8. Testing the product
 
 - Unit tests (`node:test`) for detection, fingerprint, guard rules, failure signatures, redaction,
@@ -300,6 +349,7 @@ events)**, `auto` (stop only on guard events and escalation). Flag: `/seaworthy:
 
 - On `defi-agent`, `/seaworthy:ship <small task>` reaches green CI and a PR without manual git.
 - A seeded "delete the failing test" scenario is caught by diff-guard and never committed.
+- The red-team suite (≥ 30 bypass cases, 7.12) passes in CI: every case denied or detected.
 - A seeded build-only failure (like the wagmi import) is caught before push.
 - In Orca, an agent finishing on a red worktree triggers a notification, and the panel shows all
   worktrees with correct status.
