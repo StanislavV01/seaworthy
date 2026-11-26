@@ -7,8 +7,8 @@ import { diffTrees, showFile, topLevel, treeFingerprint } from './git.js'
  * @typedef {{ id: string, type: GuardType, path: string, detail: string }} GuardEvent
  */
 
-const TEST_FILE = /(^|\/)(__tests__|tests?|spec|e2e)\/|\.(test|spec|e2e)\.[cm]?[jt]sx?$|_test\.(go|py)$|(^|\/)test_[^/]+\.py$/
-const CODE_FILE = /\.([cm]?[jt]sx?|vue|svelte|py|go)$/
+const TEST_FILE = /(^|\/)(__tests__|tests?|spec|e2e)\/|\.(test|spec|e2e)\.[cm]?[jt]sx?$|_test\.(go|py|cc|cpp)$|(^|\/)test_[^/]+\.(py|c|cc|cpp)$/
+const CODE_FILE = /\.([cm]?[jt]sx?|vue|svelte|py|go|c|cc|cpp|cxx|h|hh|hpp|hxx)$/
 
 /** Patterns whose count going up means a test was switched off. */
 const SKIP_PATTERNS = [
@@ -17,6 +17,7 @@ const SKIP_PATTERNS = [
   ['.todo', /\b(?:it|test)\.todo\b/g],
   ['x-prefixed test', /(?<![\w$.])x(?:it|test|describe)\s*\(/g],
   ['pytest skip', /@pytest\.mark\.(?:skip|xfail)\b/g],
+  ['unittest skip', /@unittest\.(?:skip|skipIf|skipUnless|expectedFailure)\b|self\.skipTest\(/g],
   ['t.Skip', /\bt\.Skip(?:Now|f)?\s*\(/g],
   ['trivial assertion', /expect\(\s*(?:true|1|null|undefined|['"][^'"]*['"])\s*\)\.(?:toBe|toEqual|toStrictEqual|toBeTruthy|toBeDefined)\(\s*(?:true|1|null|undefined|['"][^'"]*['"])?\s*\)|assert(?:\.ok)?\(\s*(?:true|1)\s*\)|assert\.equal\(\s*(\w+)\s*,\s*\1\s*\)/g],
   ['dead-code test', /if\s*\(\s*(?:0|false)\s*\)\s*\{?\s*(?:it|test|describe)\s*\(/g],
@@ -35,7 +36,7 @@ const SUPPRESSION_PATTERNS = [
   ['nolint', /\/\/\s*nolint\b/g],
 ]
 
-const TEST_CASE = /(?<![\w$.])(?:it|test)(?:\.each\s*\([^)]*\)\s*)?\s*\(|(?<![\w$])def test_\w+\s*\(|func Test\w+\s*\(/g
+const TEST_CASE = /(?<![\w$.])(?:it|test)(?:\.each\s*\([^)]*\)\s*)?\s*\(|(?<![\w$])def test_\w+\s*\(|func Test\w+\s*\(|^\s*(?:TEST|TEST_F|TEST_P|TEST_CASE|SCENARIO)\s*\(/gm
 
 const CONFIG_FILES = [
   /(^|\/)eslint\.config\.[cm]?[jt]s$/,

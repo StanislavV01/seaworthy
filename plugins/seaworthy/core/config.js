@@ -94,7 +94,7 @@ export function validateConfig(c) {
   }
   if (!c || typeof c !== 'object') bad('(root)', 'must be an object')
   if (c.version !== 1) bad('version', 'must be 1')
-  if (!['npm', 'pnpm', 'yarn', 'bun'].includes(c.packageManager)) bad('packageManager', 'must be npm, pnpm, yarn or bun')
+  if (!['npm', 'pnpm', 'yarn', 'bun', 'none'].includes(c.packageManager)) bad('packageManager', 'must be npm, pnpm, yarn, bun or none')
   if (!Array.isArray(c.checks)) bad('checks', 'must be an array')
   c.checks.forEach((/** @type {any} */ ch, /** @type {number} */ i) => {
     if (!CHECK_IDS.includes(ch?.id)) bad(`checks[${i}].id`, `must be one of ${CHECK_IDS.join(', ')}`)

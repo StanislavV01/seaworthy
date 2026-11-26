@@ -126,3 +126,13 @@ test('approval is bound to content: a later rewrite of the same file is a new ev
   writeFileSync(join(dir, 'vitest.config.ts'), 'export default { test: { exclude: ["**"] } }\n')
   assert.notEqual((await scanGuard(dir, start))[0].id, first)
 })
+
+test('C++ TEST() cases and Python unittest skips are guarded', async () => {
+  const dir = repo({ 'tests/test_k.cpp': 'TEST(a) {}\nTEST(b) {}\n', 'tests/test_x.py': 'import unittest\nclass T(unittest.TestCase):\n    def test_a(self): pass\n' })
+  const start = await treeFingerprint(dir)
+  writeFileSync(join(dir, 'tests/test_k.cpp'), 'TEST(a) {}\n')
+  writeFileSync(join(dir, 'tests/test_x.py'), 'import unittest\nclass T(unittest.TestCase):\n    @unittest.skip("later")\n    def test_a(self): pass\n')
+  const t = (await scanGuard(dir, start)).map((e) => `${e.type}:${e.path}`)
+  assert.ok(t.includes('test_case_removed:tests/test_k.cpp'), t.join())
+  assert.ok(t.includes('skip_added:tests/test_x.py'), t.join())
+})
