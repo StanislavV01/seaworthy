@@ -1,0 +1,7 @@
+"on":
+  pull_request:
+    branches: [ main ]
+jobs:
+  t:
+    steps:
+      - run: npm test
