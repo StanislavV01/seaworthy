@@ -11,6 +11,8 @@ is green — enforced by hooks and git hooks the agent cannot talk its way aroun
 A **Claude Code plugin** and an **[Orca](https://github.com/stablyai/orca) extension**, sharing one
 zero-dependency core.
 
+<img src="docs/demo.svg" alt="seaworthy refusing an agent's shortcuts on a real C++ repo" width="860">
+
 ![tests](https://img.shields.io/badge/tests-282_passing-3fb950?style=flat)
 ![red-team](https://img.shields.io/badge/red--team-81_bypasses_blocked-6366F1?style=flat)
 ![deps](https://img.shields.io/badge/runtime_deps-0-blue?style=flat)
