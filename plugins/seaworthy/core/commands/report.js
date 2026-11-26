@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { parseArgs, writeJson } from '../args.js'
 import { loadConfig } from '../config.js'
 import { git, topLevel } from '../git.js'
-import { nextStep } from '../hooks/handlers.js'
+import { FINAL_STEP, nextStep } from '../hooks/handlers.js'
 import { renderReport, statusJson } from '../report.js'
 import { loadState, logEvent, saveState, statePaths } from '../state.js'
 
@@ -32,7 +32,9 @@ export async function run(args, io) {
         .reverse()
         .map((l) => ({ sha: l.split('\t')[0], subject: l.split('\t').slice(1).join('\t') }))
   }
-  const remaining = await nextStep({ input: {}, env: io.env, root, state, tampered: null, cfg, active: true, gating: true })
+  const next = await nextStep({ input: {}, env: io.env, root, state, tampered: null, cfg, active: true, gating: true })
+  // "run report --final" is this very command: it is not a remaining step.
+  const remaining = next === FINAL_STEP ? null : next
   const st = await statusJson(root, io.env)
   const done = !remaining && (st.ci.status === 'success' || st.ci.status === 'none')
   if (flags.final && done) {

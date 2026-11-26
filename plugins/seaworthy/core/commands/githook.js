@@ -82,6 +82,29 @@ export async function run(args, io) {
     reasons.push(...r.reasons)
     return reasons.length ? refuse([...new Set(reasons)]) : 0
   }
+  if (name === 'reference-transaction') {
+    // Only the "prepared" phase can abort the transaction.
+    if (rest[0] !== 'prepared') return 0
+    const lines = (await readAll(io.stdin)).split('\n').filter((l) => l.trim())
+    /** @type {Awaited<ReturnType<typeof commitGate>> | null} */
+    let gate = null
+    /** @type {string[]} */
+    const reasons = []
+    for (const line of lines) {
+      const [, newSha, ref] = line.split(/\s+/)
+      if (!ref || !(ref === 'HEAD' || /^refs\/(heads|tags)\//.test(ref))) continue
+      if (!newSha || ZERO.test(newSha)) continue // deletions
+      // A commit that is already on a branch, tag or remote-tracking ref is not new code
+      // (`git switch -c`, `git branch x`, moving back). The stash is not counted: it holds red trees.
+      const fresh = await git(root, ['rev-list', '-n', '1', newSha, '--not', '--branches', '--tags', '--remotes'])
+      if (fresh.code === 0 && fresh.stdout.trim() === '') continue
+      gate ??= await commitGate({ root, state, cfg })
+      if (!gate.ok) reasons.push(`${ref} → ${newSha.slice(0, 8)}: ${gate.reasons.join('; ')}`)
+    }
+    if (!reasons.length) return 0
+    io.stderr.write(`seaworthy refused this ref update (session active; \`seaworthy stop\` ends it): new commits need the same gates as \`git commit\`:\n- ${[...new Set(reasons)].join('\n- ')}\n`)
+    return 1
+  }
   io.stderr.write(`seaworthy githook: unknown hook ${name}\n`)
   return 2
 }

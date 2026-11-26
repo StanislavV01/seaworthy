@@ -3,7 +3,7 @@ import { parseArgs, writeJson } from '../args.js'
 import { afterCiFailure } from '../caps.js'
 import { failureExcerpt, ensurePr, GhUnavailable, rerunFailed, watchRuns } from '../ci.js'
 import { DEFAULT_CAPS, loadConfig } from '../config.js'
-import { currentBranch, defaultBranch, headSha, topLevel } from '../git.js'
+import { currentBranch, defaultBranch, git, headSha, topLevel } from '../git.js'
 import { loadState, logEvent, saveState } from '../state.js'
 import { ciRunsOnPush, hasPullRequestCi, readWorkflows } from '../workflows.js'
 
@@ -63,8 +63,16 @@ export async function run(args, io) {
     }
 
     if (workflows.length === 0) {
+      // Without CI there is nothing to wait for — but only once HEAD is actually on the remote.
+      const onRemote = (await git(root, ['branch', '-r', '--contains', sha])).stdout.trim() !== ''
+      if (!onRemote) {
+        say({ status: 'not-pushed' }, 'no CI configured, and HEAD is not on the remote yet: push the branch first (`git push -u origin <branch>`), then run `seaworthy ci watch`')
+        return 2
+      }
       if (state) {
         state.phase = 'report'
+        // Record the outcome for this sha, so the Stop hook and the report see "no CI" as settled.
+        if (!state.ci.runs.some((r) => r.sha === sha && r.conclusion === 'none')) state.ci.runs.push({ id: 0, sha, conclusion: 'none' })
         logEvent(state, 'ci', 'no CI configured')
         await saveState(root, io.env, state)
       }
