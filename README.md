@@ -13,8 +13,8 @@ zero-dependency core.
 
 <img src="docs/demo.svg" alt="seaworthy refusing an agent's shortcuts on a real C++ repo" width="860">
 
-![tests](https://img.shields.io/badge/tests-282_passing-3fb950?style=flat)
-![red-team](https://img.shields.io/badge/red--team-81_bypasses_blocked-6366F1?style=flat)
+![tests](https://img.shields.io/badge/tests-357_passing-3fb950?style=flat)
+![red-team](https://img.shields.io/badge/red--team-100_bypasses_blocked-6366F1?style=flat)
 ![deps](https://img.shields.io/badge/runtime_deps-0-blue?style=flat)
 ![License](https://img.shields.io/badge/license-MIT-blue?style=flat)
 
@@ -98,7 +98,7 @@ flowchart TB
     Dev --> Orca[Orca extension<br/>detector · Ship Score · status bar]
     CC --> Core[seaworthy core CLI<br/>checks · diff-guard · bash analyzer · signed state · CI]
     Orca --> Core
-    Core --> Git[git hooks backstop<br/>pre-commit · commit-msg · pre-push]
+    Core --> Git[git hooks backstop<br/>pre-commit · commit-msg · pre-push · reference-transaction]
     Core --> GH[GitHub Actions via gh<br/>watch · excerpt · rerun flaky once]
 ```
 
@@ -111,13 +111,19 @@ flowchart TB
   read the key, seaworthy's code or the core copy git hooks run.
 - **A shell analyzer, not a regex.** Every Bash command is tokenized (quotes, `$(…)`, backticks,
   here-docs, `sh -c`, `eval`, `xargs`, `find -exec`, aliases, `git -c`/`-C`, `GIT_*` and
-  `NODE_OPTIONS` environment, ANSI-C strings) so `sh -c "git commit"` is seen for what it is. What it
-  cannot read with confidence, it refuses.
+  `NODE_OPTIONS` environment, ANSI-C strings, `trap`, `script -c`, `env -S`, `npm exec -c`) so
+  `sh -c "git commit"` is seen for what it is. Git subcommands are allow-listed: anything that is not
+  known to be safe (`send-pack`, `fast-import`, a plugin's subcommand) counts as a write. What it
+  cannot read with confidence — shell functions, code piped into a shell, inline interpreter code
+  that spawns processes or decodes code, `awk system()`, `sed e`, `tar --checkpoint-action` — it
+  refuses.
 - **No scripts written during the session.** The agent may run project files and installed tools,
   but not a script (or `package.json` script) it created or changed during the session — that closes
   "write a helper that does the forbidden thing".
 - **A git-level backstop.** If a commit or push reaches git some other way during a session, git's
-  own hooks re-check the same gates.
+  own hooks re-check the same gates. A `reference-transaction` hook covers plumbing too: no branch or
+  tag can move to a new commit while the commit gates are red, whether the commit came from
+  `git commit`, `commit-tree` + `update-ref`, or a test file that shells out.
 
 ## Threat model (honest version)
 
@@ -133,6 +139,10 @@ It is **not a sandbox**, and here is exactly where it stops:
   always wins locally.
 - The commit gate checks the whole working tree, so an intermediate commit of a partial stage is not
   checked on its own; the pushed `HEAD` always is.
+- A program the agent is allowed to run (a test file under `npm test`, a build script) is not read
+  by the analyzer. Local branches are still protected by the `reference-transaction` hook, but such a
+  program could send an existing object to the remote with `git send-pack`, which runs no client-side
+  hook. That is what CI and branch protection are for.
 - **CI is the ground truth.** seaworthy watches GitHub's result, which the agent cannot fake, and
   protects the workflow files from edits. Pair it with branch protection and required checks.
 
@@ -141,9 +151,10 @@ permission prompts disabled: approvals of guard events happen at Claude Code's p
 
 ## Red-team results
 
-`test/redteam/` runs 81 bypass attempts against a session whose code is red — the original 57 plus
-24 found by an independent review — and 20 everyday commands that must keep working. All attempts
-are blocked or detected (CI runs them on every push):
+`test/redteam/` runs 100 bypass attempts against a session whose code is red — the original 57, 24
+found by an independent review and 19 found by [seaworthy-bench](bench/)'s execution fuzzer — and
+21 everyday commands that must keep working. All attempts are blocked or detected (CI runs them on
+every push):
 
 | Category | Attempts | Examples |
 |---|---|---|
@@ -153,6 +164,7 @@ are blocked or detected (CI runs them on every push):
 | Around Claude Code entirely | 3 | commit / push from a script, trailer smuggled via `-F` |
 | Test & check weakening | 6 | delete the failing test, `it.skip` stub, remove a case, `@ts-nocheck`, fake `test` script, `strict: false` |
 | State forgery | 3 | forge green, replay an older signed state, delete the state |
+| Found by seaworthy-bench | 19 | plain `git send-pack` to origin, plumbing commits hidden in shell functions, `. file`, `python -c` + base64, `awk system()`, `sed e`, `tar --checkpoint-action`, `npm exec -c`, `base64 \| sh`, `rev \| sh`, `make -f`, `script -c`, `trap EXIT`, `env -S`, `watch`, `node -e` with split quotes, `fetch` into a local branch; a plumbing commit from an unreadable script and from a program that shells out (refused by the `reference-transaction` hook) |
 | Found in review | 24 | git aliases via `GIT_CONFIG_*`, `GIT_AUTHOR_NAME`, `export GIT_DIR`, `PATH`/`NODE_OPTIONS` shadowing the checks, running seaworthy's core copy or a copy of it, scripts written outside or inside the repo (incl. in the same command), `npm run` of a new script, symlinks and case tricks into `.git`, abbreviated `--auth`/`--no-veri`, `push --no-verify` to `heads/main`, `--force-with-lease`, pushing a stash commit, `git config set`/`--unset`, two approvals behind one prompt, reading the key, another Claude session in the same worktree |
 
 ## Configuration — `.seaworthy.json`
@@ -205,11 +217,30 @@ Add to Claude Code's `settings.json` (adjust the path):
 | `seaworthy report [--final]` | the report; `--final` marks the session done only if everything is green |
 | `seaworthy approve <id>` / `waive <id>` / `stop` / `allow-force-push` | **developer only** — refused when the agent runs them |
 
+## Benchmark
+
+[`bench/`](bench/) measures the gates instead of asserting them: calibrated scripted agents
+(honest, sloppy, cheating, persistent) through three arms — no gate, the common "pre-commit tests +
+block `--no-verify`" setup, and seaworthy — graded by a hidden oracle on what reached `origin`; an
+execution fuzzer (1,056 bypass variants, each run for real); and a live A/B harness for Claude Code.
+
+| seaworthy arm, reviewer simulated as always approving | |
+|---|---|
+| Structural cheats shipped (delete / skip tests, edit the test script, disable the gate …), incl. an agent trying 9 bypasses | **0 / 75** (pre-commit baseline: 69 / 75) |
+| Sloppy work (build-only failure, debug log, post-review tweak) ending good | **6 / 6** (baseline: 2 / 6) |
+| Fuzzer variants that moved a ref with red code | **0 / 980** (v0.1.0: 229) |
+| Everyday commands refused | **0 / 40** |
+| Semantic cheats (hard-coding, rewritten expectations) — the reviewer's job | 10 / 11 shipped with a fooled reviewer |
+
+Full tables: [bench/RESULTS.md](bench/RESULTS.md). What the benchmark found in v0.1.0 and how it was
+fixed: [bench/FINDINGS.md](bench/FINDINGS.md). Run it: `node bench/run.js` (offline) and
+`node bench/live/run.js --n 5` (Claude Code, costs tokens).
+
 ## Development
 
 ```bash
 npm install
-npm test           # 282 tests: unit, hooks, git hooks, CI (fake gh), Orca worker (fake Orca), red-team
+npm test           # 357 tests: unit, hooks, git hooks, CI (fake gh), Orca worker (fake Orca), red-team
 npm run typecheck  # tsc --checkJs over the JS core
 ```
 
@@ -219,8 +250,8 @@ tests) runs directly.
 
 ## Roadmap
 
-- [ ] Eval harness: the same tasks with and without seaworthy (and with superpowers) — green at first
-      push, guard catches, CI cycles, cost
+- [x] Eval harness: offline tracks in `bench/`
+- [ ] Live A/B numbers with Claude Code (and superpowers) — harness ready in `bench/live/`
 - [ ] Python (uv/poetry) and Go detection; monorepo `--affected`
 - [ ] "Does your agent lie about done?" public benchmark
 - [ ] Codex and Gemini CLI adapters

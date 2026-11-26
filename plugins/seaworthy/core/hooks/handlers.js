@@ -99,6 +99,12 @@ async function runProblems(ctx, a, opts, depth = 0) {
     const r = await scriptProblem(ctx, p)
     if (r) out.push(r)
   }
+  // Files a command runs implicitly when they exist (`make` → Makefile): same rules, if present.
+  for (const p of a.maybeScripts ?? []) {
+    if (!existsSync(resolveForWrite(ctx.input.cwd || ctx.root, p))) continue
+    const r = await scriptProblem(ctx, p)
+    if (r) out.push(r)
+  }
   if (!a.packageScripts.length || depth > 3) return out
   const state = /** @type {import('../state.js').State} */ (ctx.state)
   const cwd = ctx.input.cwd || ctx.root
@@ -210,6 +216,9 @@ export async function postToolUse(ctx) {
   return block(`lint failed for ${rel}:\n${r.output.trim().slice(-2000)}`)
 }
 
+/** The last step: everything is green and only `report --final` is left. */
+export const FINAL_STEP = 'everything is green: run `seaworthy report --final` to finish.'
+
 /**
  * What should happen next in the loop, or null when the session may stop.
  * @param {Ctx} ctx
@@ -239,8 +248,8 @@ export async function nextStep(ctx) {
   if (state.ci.sha !== sha) return 'push the branch (`git push -u origin <branch>`), then run `seaworthy ci watch`.'
   const last = state.ci.runs.filter((r) => r.sha === sha).at(-1)
   if (!last || last.conclusion === 'pending') return 'CI is running: run `seaworthy ci watch` again.'
-  if (last.conclusion !== 'success') return 'CI failed: run `seaworthy ci excerpt`, fix the cause locally, re-run checks, commit and push.'
-  if (state.phase !== 'done') return 'everything is green: run `seaworthy report --final` to finish.'
+  if (last.conclusion !== 'success' && last.conclusion !== 'none') return 'CI failed: run `seaworthy ci excerpt`, fix the cause locally, re-run checks, commit and push.'
+  if (state.phase !== 'done') return FINAL_STEP
   return null
 }
 

@@ -5,14 +5,16 @@ import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { git } from './git.js'
 
-export const HOOK_NAMES = /** @type {const} */ (['pre-commit', 'commit-msg', 'pre-push'])
+// reference-transaction (git ≥ 2.28) runs for every ref update, plumbing included (`update-ref`,
+// `commit-tree` + `update-ref`, commits made by a test file or any other program). pre-commit does not.
+export const HOOK_NAMES = /** @type {const} */ (['pre-commit', 'commit-msg', 'pre-push', 'reference-transaction'])
 const MARK = '# seaworthy git hook'
 
 /** @param {string} name */
 export function hookScript(name) {
   return `#!/bin/sh
 ${MARK} (installed by \`seaworthy init\`; the previous hook, if any, runs first)
-prev="$(dirname "$0")/${name}.seaworthy-prev"
+${name === 'reference-transaction' ? '[ "$1" = prepared ] || exit 0\n' : ''}prev="$(dirname "$0")/${name}.seaworthy-prev"
 if [ -x "$prev" ]; then "$prev" "$@" || exit $?; fi
 common="$(git rev-parse --git-common-dir 2>/dev/null)" || exit 0
 cli="$common/seaworthy-core/cli.js"

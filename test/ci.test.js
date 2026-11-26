@@ -110,3 +110,55 @@ test('ci watch opens a draft PR when CI only runs on pull_request, then reports 
   assert.equal(s.phase, 'report')
   assert.match(readFileSync(e.file + '.calls', 'utf8'), /pr create --draft --fill --base main --head feat\/x/)
 })
+
+/** Gives the harness repo a bare origin with HEAD pushed. @param {ReturnType<typeof setup>} t */
+function withPushedOrigin(t) {
+  const origin = tmp('origin-')
+  sh(origin, ['git', 'init', '-q', '--bare'])
+  sh(t.dir, ['git', 'remote', 'add', 'origin', origin])
+  sh(t.dir, ['git', 'push', '-q', '--no-verify', '-u', 'origin', 'feat/x'])
+}
+
+test('ci watch with no workflows and HEAD not pushed: says push first, records nothing', async () => {
+  const t = setup()
+  await t.start()
+  const { main } = await import('../plugins/seaworthy/core/cli.js')
+  const { captureIO } = await import('./helpers.js')
+  const io = captureIO(t.dir, '', t.env)
+  assert.equal(await main(['ci', 'watch'], io.io), 2)
+  assert.match(io.out(), /not on the remote yet/)
+  const s = JSON.parse((await t.cli(['state', '--json'])).out)
+  assert.equal(s.ci.runs.length, 0)
+})
+
+test('ci watch with no workflows settles CI for a pushed HEAD', async () => {
+  const t = setup()
+  withPushedOrigin(t)
+  await t.start()
+  const { main } = await import('../plugins/seaworthy/core/cli.js')
+  const { captureIO } = await import('./helpers.js')
+  const io = captureIO(t.dir, '', t.env)
+  assert.equal(await main(['ci', 'watch'], io.io), 0)
+  assert.match(io.out(), /no CI configured/)
+  const s = JSON.parse((await t.cli(['state', '--json'])).out)
+  const sha = sh(t.dir, ['git', 'rev-parse', 'HEAD']).trim()
+  assert.ok(s.ci.runs.some((/** @type {any} */ r) => r.sha === sha && r.conclusion === 'none'))
+})
+
+test('no workflows: after green checks and an approved review, Stop is not blocked by "CI is running"', async () => {
+  const t = setup()
+  withPushedOrigin(t)
+  await t.start()
+  await t.cli(['check', '--tier', 'commit'])
+  await t.approve()
+  await t.cli(['check', '--tier', 'push'])
+  await t.cli(['ci', 'watch'])
+  const first = await t.hook('stop', { stop_hook_active: false })
+  assert.doesNotMatch(JSON.stringify(first.json), /CI is running/)
+  assert.match(JSON.stringify(first.json), /report --final/)
+  const rep = await t.cli(['report', '--final'])
+  assert.equal(rep.code, 0, rep.out)
+  assert.match(rep.out, /Shipped/)
+  const stop = await t.hook('stop', { stop_hook_active: false })
+  assert.notEqual(stop.json?.decision, 'block', JSON.stringify(stop.json))
+})
