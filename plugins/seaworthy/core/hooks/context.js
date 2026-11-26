@@ -1,4 +1,6 @@
 // @ts-check
+import { existsSync, realpathSync } from 'node:fs'
+import { basename, dirname, join, resolve } from 'node:path'
 import { loadConfig } from '../config.js'
 import { git, isGitRepo, topLevel } from '../git.js'
 import { keyDir } from '../integrity.js'
@@ -28,6 +30,7 @@ import { loadState, TamperError } from '../state.js'
  *   tampered: string | null,
  *   cfg: import('../config.js').Config | null,
  *   active: boolean,
+ *   gating: boolean,
  * }} HookContext
  */
 
@@ -82,7 +85,8 @@ export async function load(input, env) {
     cfg = null
   }
   const active = Boolean(state && input.session_id && state.session_id === input.session_id && !['stopped', 'done'].includes(state.phase))
-  return { input, env, root, state, tampered, cfg, active }
+  const gating = Boolean(state && !['stopped', 'done'].includes(state.phase))
+  return { input, env, root, state, tampered, cfg, active, gating }
 }
 
 /** Paths a session protects besides the repo-relative ones. @param {Record<string, string | undefined>} env */
@@ -90,6 +94,51 @@ export function extraProtected(env) {
   const out = [keyDir(env)]
   if (env.CLAUDE_PLUGIN_ROOT) out.push(env.CLAUDE_PLUGIN_ROOT)
   return out
+}
+
+/** @param {string} p */
+function realOrSelf(p) {
+  try {
+    return realpathSync(p)
+  } catch {
+    return p
+  }
+}
+
+/**
+ * Resolves a path the way the OS will when writing it: through symlinks in any existing parent.
+ * @param {string} cwd
+ * @param {string} p
+ */
+export function resolveForWrite(cwd, p) {
+  const expanded = p.startsWith('~/') ? join(process.env.HOME ?? '', p.slice(2)) : p
+  let cur = resolve(cwd, expanded)
+  /** @type {string[]} */
+  const rest = []
+  while (!existsSync(cur)) {
+    const parent = dirname(cur)
+    if (parent === cur) break
+    rest.unshift(basename(cur))
+    cur = parent
+  }
+  return join(realOrSelf(cur), ...rest)
+}
+
+/**
+ * Everything the session protects, for the Bash analyzer and the Edit/Write check.
+ * @param {HookContext} ctx
+ */
+export async function protection(ctx) {
+  const hooksR = await git(ctx.root, ['rev-parse', '--git-path', 'hooks'])
+  const commonR = await git(ctx.root, ['rev-parse', '--git-common-dir'])
+  const hooksDir = hooksR.code === 0 ? realOrSelf(resolve(ctx.root, hooksR.stdout.trim())) : null
+  const common = commonR.code === 0 ? realOrSelf(resolve(ctx.root, commonR.stdout.trim())) : join(ctx.root, '.git')
+  const hidden = [keyDir(ctx.env), join(common, 'seaworthy-core')]
+  if (ctx.env.CLAUDE_PLUGIN_ROOT) hidden.push(ctx.env.CLAUDE_PLUGIN_ROOT, realOrSelf(ctx.env.CLAUDE_PLUGIN_ROOT))
+  const protectedPaths = [...extraProtected(ctx.env), ...hidden, common]
+  if (hooksDir) protectedPaths.push(hooksDir)
+  const cwd = ctx.input.cwd || ctx.root
+  return { protectedPaths, hiddenPaths: hidden, resolve: (/** @type {string} */ p) => resolveForWrite(cwd, p) }
 }
 
 /** The developer's git aliases, so `git ci` is read as `git commit`. @param {string} root */

@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
 import { isGreen } from './checks.js'
+import { configHash } from './config.js'
 import { allowedTrailerKeys, checkMessage, parseCommitArgs } from './commit-rules.js'
 import { currentBranch, defaultBranch, git, treeFingerprint } from './git.js'
 import { openEvents, scanGuard } from './guard.js'
@@ -34,10 +35,12 @@ export async function commitGate(p) {
       else reasons.push(`message file ${args.messageFile} not found`)
     }
     reasons.push(...checkMessage(msg, args.trailers, await allowedTrailerKeys(root, cfg)))
+    if (args.pathspec) reasons.push('commit staged changes only (`git add <paths>` then `git commit -m …`), not `git commit -- <paths>`')
   } else if (p.message !== undefined && p.message !== null) {
     reasons.push(...checkMessage(p.message, [], await allowedTrailerKeys(root, cfg)))
   }
 
+  if (state.config_hash && configHash(cfg) !== state.config_hash) reasons.push('.seaworthy.json changed during the session; the developer must restart it with /seaworthy:ship')
   if (!isGreen(state, 'commit', tree, cfg)) {
     const last = state.checks.commit ?? state.checks.push
     reasons.push(
@@ -59,26 +62,64 @@ export async function commitGate(p) {
   return { ok: reasons.length === 0, reasons, tree }
 }
 
+const PUSH_FLAGS = new Set(['-u', '--set-upstream', '-q', '--quiet', '-v', '--verbose', '--progress', '--no-progress', '--dry-run', '-n', '--porcelain', '--atomic', '--verify', '--follow-tags', '--signed', '--no-signed', '--ipv4', '--ipv6', '-4', '-6'])
+const PUSH_VALUE_FLAGS = new Set(['-o', '--push-option', '--recurse-submodules', '--signed'])
+
+/** `heads/main`, `refs/heads/main`, `main` → `main`. @param {string} r */
+const branchName = (r) => r.replace(/^refs\/heads\//, '').replace(/^heads\//, '')
+
 /**
- * Parses `git push` arguments into flags and the destination branch.
+ * Parses `git push` arguments into flags, sources and destinations. Unknown or abbreviated
+ * options are reported, because git accepts unique prefixes (`--no-ver` = `--no-verify`).
  * @param {string[]} argv
  * @param {string | null} current
  */
 export function parsePush(argv, current) {
-  const flags = argv.filter((a) => a.startsWith('-'))
-  const pos = argv.filter((a) => !a.startsWith('-'))
+  /** @type {string[]} */
+  const unknown = []
+  let force = false
+  let lease = false
+  let deletes = false
+  let all = false
+  let noVerify = false
+  /** @type {string[]} */
+  const pos = []
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i]
+    if (!a.startsWith('-') || a === '-') {
+      pos.push(a)
+      continue
+    }
+    const name = a.includes('=') ? a.slice(0, a.indexOf('=')) : a
+    if (name === '--force' || name === '-f') force = true
+    else if (name === '--force-with-lease' || name === '--force-if-includes') {
+      force = true
+      lease = true
+    } else if (name === '--delete' || name === '-d' || name === '--prune') deletes = true
+    else if (name === '--all' || name === '--mirror' || name === '--tags' || name === '--branches') all = true
+    else if (name === '--no-verify') noVerify = true
+    else if (PUSH_VALUE_FLAGS.has(name)) {
+      if (!a.includes('=') && name !== '--signed') i++
+    } else if (/^-[a-zA-Z]{2,}$/.test(a)) {
+      for (const ch of a.slice(1)) {
+        if (ch === 'f') force = true
+        else if (ch === 'd') deletes = true
+        else if (!'uqvn46'.includes(ch)) unknown.push(`-${ch}`)
+      }
+    } else if (!PUSH_FLAGS.has(name)) unknown.push(a)
+  }
   const refspecs = pos.slice(1)
-  const force = flags.some((a) => a === '--force' || a === '-f' || /^-[a-zA-Z]*f/.test(a) || a === '--mirror') || refspecs.some((r) => r.startsWith('+'))
-  const lease = flags.some((a) => a.startsWith('--force-with-lease') || a.startsWith('--force-if-includes'))
-  const deletes = flags.some((a) => a === '--delete' || a === '-d' || a === '--prune') || refspecs.some((r) => r.startsWith(':'))
-  const targets = refspecs.length
+  if (refspecs.some((r) => r.startsWith('+'))) force = true
+  if (refspecs.some((r) => r.startsWith(':'))) deletes = true
+  const pairs = refspecs.length
     ? refspecs.map((r) => {
         const s = r.replace(/^\+/, '')
-        const dst = s.includes(':') ? s.split(':')[1] : s
-        return dst.replace(/^refs\/heads\//, '') === 'HEAD' ? current : dst.replace(/^refs\/heads\//, '')
+        const [src, dst] = s.includes(':') ? s.split(':') : [s, s]
+        const d = branchName(dst)
+        return { src: src || 'HEAD', dst: d === 'HEAD' ? current : d }
       })
-    : [current]
-  return { force, lease, deletes, targets, all: flags.includes('--all') || flags.includes('--mirror') || flags.includes('--tags') }
+    : [{ src: 'HEAD', dst: current }]
+  return { force, lease, deletes, all, noVerify, unknown, pairs, targets: pairs.map((p) => p.dst) }
 }
 
 /**
@@ -94,11 +135,18 @@ export async function pushGate(p) {
   const current = await currentBranch(root)
   const def = await defaultBranch(root)
   const push = parsePush(p.argv, current)
+  if (push.noVerify) reasons.push('--no-verify skips the git hooks')
+  if (push.unknown.length) reasons.push(`unrecognised push option(s) ${push.unknown.join(', ')}: use full option names`)
   if (push.force && !(push.lease && state.force_push_allowed)) reasons.push('force push is not allowed (the developer can allow --force-with-lease once with `seaworthy allow-force-push`)')
   if (push.deletes) reasons.push('deleting remote branches is not allowed during a session')
-  if (push.all) reasons.push('push one branch at a time (no --all, --mirror or --tags)')
-  if (push.targets.some((t) => t === def)) reasons.push(`pushing to the default branch ${def} is not allowed; push a feature branch and open a PR`)
+  if (push.all) reasons.push('push one branch at a time (no --all, --mirror, --branches or --tags)')
+  if (push.targets.some((t) => t !== null && branchName(t).toLowerCase() === def.toLowerCase())) reasons.push(`pushing to the default branch ${def} is not allowed; push a feature branch and open a PR`)
   if (push.targets.some((t) => t === null)) reasons.push('detached HEAD: create a branch first')
+  const headSha = (await git(root, ['rev-parse', '--verify', '-q', 'HEAD'])).stdout.trim()
+  for (const pair of push.pairs) {
+    const src = await git(root, ['rev-parse', '--verify', '-q', `${pair.src}^{commit}`])
+    if (src.code !== 0 || src.stdout.trim() !== headSha) reasons.push(`only the checked HEAD can be pushed (\`${pair.src}\` is not HEAD)`)
+  }
   const head = await git(root, ['rev-parse', '--verify', '-q', 'HEAD^{tree}'])
   if (head.code !== 0 || head.stdout.trim() !== tree) reasons.push('there are uncommitted changes; the pushed code must be exactly the checked code — commit or discard them')
   if (!isGreen(state, 'push', tree, cfg)) reasons.push('push checks (including build) have not passed for this code; run `seaworthy check --tier push`')

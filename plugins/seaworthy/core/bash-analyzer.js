@@ -9,10 +9,16 @@ import { parseShell } from './shell-parse.js'
  *   seaworthy: { sub: string, argv: string[] }[],
  *   humanOnly: string[],
  *   ambiguous: string[],
+ *   dangerousEnv: string[],
+ *   protectedRefs: string[],
+ *   scripts: string[],
+ *   packageScripts: string[],
  * }} Analysis
  * @typedef {{
  *   protectedPaths?: string[],
+ *   hiddenPaths?: string[],
  *   aliases?: Record<string, string>,
+ *   resolve?: (p: string) => string | null,
  * }} AnalyzeOptions
  */
 
@@ -32,9 +38,17 @@ const RESERVED = new Set(['{', '}', '!', 'if', 'then', 'else', 'elif', 'fi', 'do
 const HUMAN_ONLY = new Set(['approve', 'waive', 'stop', 'allow-force-push', 'claim', 'githook', 'hook'])
 
 /** Commands that destroy or overwrite every path argument. */
-const WRITE_ALL_ARGS = new Set(['rm', 'rmdir', 'unlink', 'truncate', 'chmod', 'chown', 'chgrp', 'touch', 'tee', 'shred', 'mv', 'chattr', 'setfacl', 'xattr'])
+const WRITE_ALL_ARGS = new Set(['rm', 'rmdir', 'unlink', 'truncate', 'chmod', 'chown', 'chgrp', 'touch', 'tee', 'shred', 'mv', 'chattr', 'setfacl', 'xattr', 'ln'])
 /** Commands whose last argument is the destination. */
-const WRITE_LAST_ARG = new Set(['cp', 'install', 'rsync', 'ln', 'scp'])
+const WRITE_LAST_ARG = new Set(['cp', 'install', 'rsync', 'scp'])
+
+/** Environment variables that redirect git, the checks or the shell. Never allowed during a session. */
+const DANGEROUS_ENV = /^(GIT_[A-Z0-9_]+|NODE_OPTIONS|NODE_PATH|LD_PRELOAD|LD_LIBRARY_PATH|LD_AUDIT|DYLD_[A-Z_]+|BASH_ENV|ENV|PATH|SHELLOPTS|PYTHONPATH|PYTHONSTARTUP|RUBYOPT|PERL5OPT|PERL5LIB|SEAWORTHY_[A-Z_]+|XDG_CONFIG_HOME|HOME|PROMPT_COMMAND)$/
+/** Paths the agent may not even read: the HMAC key, the plugin, the core copy git hooks run. */
+const HIDDEN = /\.config\/seaworthy|\.git\/seaworthy-core/i
+const SCRIPT_RUNNERS = new Set(['node', 'nodejs', 'deno', 'bun', 'tsx', 'ts-node', 'vite-node', 'esno', 'python', 'python3', 'python2', 'ruby', 'perl', 'php', 'pwsh', 'powershell', 'osascript'])
+const NODE_LOAD_FLAGS = new Set(['-r', '--require', '--import', '--loader', '--experimental-loader'])
+const PM_BUILTINS = new Set(['install', 'i', 'add', 'remove', 'rm', 'uninstall', 'update', 'up', 'upgrade', 'ci', 'exec', 'dlx', 'x', 'create', 'init', 'link', 'unlink', 'publish', 'pack', 'outdated', 'list', 'ls', 'why', 'audit', 'config', 'set', 'get', 'info', 'view', 'login', 'logout', 'whoami', 'cache', 'store', 'prune', 'dedupe', 'rebuild', 'help', 'version', '-v', '--version'])
 
 const KEYWORDS = /\b(commit|push|update-ref|commit-tree|hookspath|seaworthy|rebase|filter-branch|cherry-pick)\b|\.git\b|state\.json|\.github/i
 
@@ -43,14 +57,15 @@ const KEYWORDS = /\b(commit|push|update-ref|commit-tree|hookspath|seaworthy|reba
  * @param {string[]} extra absolute paths that are also protected (key dir, plugin dir)
  */
 export function isProtectedPath(path, extra = []) {
-  const p = path.replace(/\\/g, '/').replace(/^\.\//, '')
+  const p = path.replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase()
   if (!p) return false
+  if (/(^|\/)node_modules\/\.bin(\/|$)/.test(p)) return true
   if (/(^|\/)\.git(\/|$)/.test(p)) return true
   if (/(^|\/)\.seaworthy\.json$/.test(p)) return true
   if (/(^|\/)\.github\/workflows(\/|$)/.test(p)) return true
   if (/(^|\/)\.github$/.test(p)) return true
   for (const e of extra) {
-    const x = e.replace(/\\/g, '/').replace(/\/+$/, '')
+    const x = e.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
     if (p === x || p.startsWith(x + '/')) return true
   }
   return false
@@ -66,6 +81,7 @@ function coversProtected(arg) {
   if (/[*?[]/.test(a)) {
     const dir = a.includes('/') ? a.slice(0, a.lastIndexOf('/')) : '.'
     if (dir !== '.' && dir !== '' && dir !== '..' && !/^(\.\.\/)*\.\.$/.test(dir)) return false
+    if (!(a.split('/').pop() ?? '').startsWith('.') && !(a.split('/').pop() ?? '').startsWith('[')) return false
     const re = new RegExp(
       '^' +
         a
@@ -87,23 +103,26 @@ const base = (w) => w.replace(/\\/g, '/').split('/').pop() ?? w
 /**
  * Strips assignments, reserved words and wrapper programs from the front of a command.
  * @param {import('./shell-parse.js').Word[]} words
- * @returns {{ words: import('./shell-parse.js').Word[], viaXargs: boolean, skip: boolean }}
+ * @returns {{ words: import('./shell-parse.js').Word[], viaXargs: boolean, skip: boolean, assigns: string[] }}
  */
 function unwrap(words) {
   let w = words.slice()
   let viaXargs = false
+  /** @type {string[]} */
+  const assigns = []
   for (let guard = 0; guard < 20 && w.length; guard++) {
     const head = w[0].text
     if (RESERVED.has(head)) {
       w = w.slice(1)
       continue
     }
-    if (w[0].literal && /^[A-Za-z_][A-Za-z0-9_]*=/.test(head)) {
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(head)) {
+      assigns.push(head.split('=')[0])
       w = w.slice(1)
       continue
     }
     const b = base(head)
-    if (b === 'command' && (w[1]?.text === '-v' || w[1]?.text === '-V')) return { words: [], viaXargs, skip: true }
+    if (b === 'command' && (w[1]?.text === '-v' || w[1]?.text === '-V')) return { words: [], viaXargs, skip: true, assigns }
     if (b === 'xargs' || b === 'parallel') {
       viaXargs = true
       w = w.slice(1)
@@ -116,6 +135,7 @@ function unwrap(words) {
     if (WRAPPERS.has(b)) {
       w = w.slice(1)
       while (w.length && (w[0].text.startsWith('-') || /^[A-Za-z_][A-Za-z0-9_]*=/.test(w[0].text) || (b === 'timeout' && /^\d/.test(w[0].text)) || (b === 'nice' && /^-?\d+$/.test(w[0].text)))) {
+        if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(w[0].text)) assigns.push(w[0].text.split('=')[0])
         const takesValue = (b === 'env' && /^-(u|C|S)$/.test(w[0].text)) || (b === 'sudo' && /^-(u|g|C|D|h|p|r|t|U)$/.test(w[0].text)) || (b === 'timeout' && /^-(s|k)$/.test(w[0].text)) || (b === 'flock' && /^-(w|E)$/.test(w[0].text))
         w = w.slice(takesValue ? 2 : 1)
       }
@@ -124,7 +144,7 @@ function unwrap(words) {
     }
     break
   }
-  return { words: w, viaXargs, skip: false }
+  return { words: w, viaXargs, skip: false, assigns }
 }
 
 /**
@@ -198,14 +218,24 @@ function resetMovesHead(rest) {
  */
 export function analyzeCommand(cmd, opts = {}) {
   /** @type {Analysis} */
-  const out = { gitWrites: [], protectedWrites: [], seaworthy: [], humanOnly: [], ambiguous: [] }
+  const out = { gitWrites: [], protectedWrites: [], seaworthy: [], humanOnly: [], ambiguous: [], dangerousEnv: [], protectedRefs: [], scripts: [], packageScripts: [] }
   const extra = opts.protectedPaths ?? []
+  const hidden = (opts.hiddenPaths ?? []).map((h) => h.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()).filter(Boolean)
   const aliases = opts.aliases ?? {}
   const hasKeywords = KEYWORDS.test(cmd)
 
   /** @param {string} p */
   const checkPath = (p) => {
     if (isProtectedPath(p, extra) || coversProtected(p)) out.protectedWrites.push(p)
+    else if (opts.resolve) {
+      const r = opts.resolve(p)
+      if (r && isProtectedPath(r, extra)) out.protectedWrites.push(`${p} (→ ${r})`)
+    }
+  }
+  /** @param {string} text */
+  const checkHidden = (text) => {
+    const t = text.replace(/\\/g, '/').toLowerCase()
+    if (HIDDEN.test(t) || hidden.some((h) => t.includes(h))) out.protectedRefs.push(text.length > 80 ? text.slice(0, 77) + '…' : text)
   }
 
   /**
@@ -223,13 +253,17 @@ export function analyzeCommand(cmd, opts = {}) {
     for (const s of parsed.substitutions) walk(s, depth + 1, true)
 
     for (const c of parsed.commands) {
+      for (const w of c.words) checkHidden(w.text)
+      for (const r of c.redirects) checkHidden(r.target.text)
+      if (c.heredoc) checkHidden(c.heredoc)
       for (const r of c.redirects) {
         if (/^(>|>>|>\||&>|&>>|<>)$/.test(r.op)) {
           if (!r.target.literal && KEYWORDS.test(r.target.text)) out.ambiguous.push(`computed redirect target ${r.target.text}`)
           checkPath(r.target.text)
         }
       }
-      const { words, viaXargs, skip } = unwrap(c.words)
+      const { words, viaXargs, skip, assigns } = unwrap(c.words)
+      for (const n of assigns) if (DANGEROUS_ENV.test(n)) out.dangerousEnv.push(n)
       if (skip || words.length === 0) continue
       const head = words[0]
       if (!head.literal) {
@@ -240,13 +274,35 @@ export function analyzeCommand(cmd, opts = {}) {
       const args = words.slice(1).map((w) => w.text)
       const isNested = nested || viaXargs || c.background || c.depth > 0
 
+      if (name === 'export' || name === 'declare' || name === 'typeset' || name === 'readonly' || name === 'set' || name === 'setenv' || name === 'unset') {
+        for (const a of args) {
+          const n = a.split('=')[0]
+          if (DANGEROUS_ENV.test(n)) out.dangerousEnv.push(n)
+        }
+        continue
+      }
       if (SHELLS.has(name)) {
         const ci = args.findIndex((a) => a === '-c' || /^-[a-z]*c$/.test(a))
         if (ci >= 0 && args[ci + 1] !== undefined) walk(args[ci + 1], depth + 1, true)
         else if (c.heredoc !== null) walk(c.heredoc, depth + 1, true)
-        else if (args.length === 0 || args.every((a) => a.startsWith('-'))) {
-          if (hasKeywords) out.ambiguous.push(`${name} reading commands from stdin`)
+        else {
+          const file = args.find((a) => !a.startsWith('-'))
+          if (file) out.scripts.push(file)
+          else if (hasKeywords) out.ambiguous.push(`${name} reading commands from stdin`)
         }
+        continue
+      }
+      if (head.text.includes('/') && !['git', 'seaworthy'].includes(name)) {
+        out.scripts.push(head.text)
+      }
+      if (name === 'npm' || name === 'pnpm' || name === 'yarn' || name === 'bun') {
+        const pos = args.filter((a) => !a.startsWith('-'))
+        const sub = pos[0]
+        if (sub === 'run' || sub === 'run-script') {
+          if (pos[1]) out.packageScripts.push(pos[1])
+        } else if (sub === 'test' || sub === 't' || sub === 'tst') out.packageScripts.push('test')
+        else if (sub === 'start' || sub === 'stop' || sub === 'restart') out.packageScripts.push(sub)
+        else if (sub && name !== 'npm' && !PM_BUILTINS.has(sub)) out.packageScripts.push(sub)
         continue
       }
       if (name === 'eval' || name === 'source' || name === '.') {
@@ -270,6 +326,17 @@ export function analyzeCommand(cmd, opts = {}) {
       if (INTERPRETERS.has(name.replace(/\d+(\.\d+)*$/, '')) || INTERPRETERS.has(name)) {
         const fi = args.findIndex((a) => INLINE_CODE_FLAGS.has(a))
         const code = fi >= 0 ? args[fi + 1] ?? '' : c.heredoc ?? ''
+        for (let k = 0; k < args.length; k++) {
+          if (NODE_LOAD_FLAGS.has(args[k]) && args[k + 1] && /^[./~]/.test(args[k + 1])) out.scripts.push(args[k + 1])
+          const eq = args[k].match(/^--(require|import|loader|experimental-loader)=(.+)$/)
+          if (eq && /^[./~]/.test(eq[2])) out.scripts.push(eq[2])
+        }
+        if (fi < 0 && SCRIPT_RUNNERS.has(name.replace(/\d+(\.\d+)*$/, '') || name)) {
+          let k = 0
+          while (k < args.length && args[k].startsWith('-')) k += NODE_LOAD_FLAGS.has(args[k]) || args[k] === '-m' ? 2 : 1
+          if (args[k] && args[k - 1] !== '-m') out.scripts.push(args[k])
+        }
+        if (code && /seaworthy|\.config|state\.json|integrity|hookspath|\.git\/hooks/i.test(code)) out.protectedRefs.push('(inline code touching seaworthy, git hooks or ~/.config)')
         if (code) {
           if (/\bgit\b/.test(code) && /\b(commit|push|update-ref|commit-tree|rebase|reset|merge|cherry-pick|config|filter-branch)\b/.test(code))
             out.gitWrites.push({ verb: 'inline-code', argv: [code], canonical: false, globals: [] })
@@ -284,11 +351,11 @@ export function analyzeCommand(cmd, opts = {}) {
           const end = args.findIndex((a, k) => k > ei && (a === ';' || a === '+' || a === '\\;'))
           walk(args.slice(ei + 1, end < 0 ? undefined : end).join(' '), depth + 1, true)
         }
-        if (args.includes('-delete') || ei >= 0) {
+        if (args.includes('-delete')) {
           const firstFlag = args.findIndex((a) => a.startsWith('-'))
           const roots = args.slice(0, firstFlag < 0 ? args.length : firstFlag)
           for (const r of roots) if (isProtectedPath(r, extra)) out.protectedWrites.push(r)
-          if (/\.git\b|seaworthy|state\.json|\.github/.test(args.join(' '))) out.protectedWrites.push(`find ${args.join(' ')}`)
+          if (/seaworthy|state\.json|hooks|workflows/.test(args.join(' '))) out.protectedWrites.push(`find ${args.join(' ')}`)
         }
         continue
       }
@@ -304,9 +371,27 @@ export function analyzeCommand(cmd, opts = {}) {
         if (!words.slice(1).every((w) => w.literal) && /commit|push|config|update-ref|reset|rebase/.test(g.verb + ' ' + g.rest.join(' ')))
           out.ambiguous.push(`computed git arguments: git ${args.join(' ')}`)
         if (g.verb === 'config') {
-          const keyArg = g.rest.find((a) => !a.startsWith('-'))
-          const reading = g.rest.some((a) => /^(--get|--get-all|--get-regexp|-l|--list|--show-origin|--show-scope|get)$/.test(a)) || g.rest.filter((a) => !a.startsWith('-')).length < 2
-          if (keyArg && SENSITIVE_CONFIG.test(keyArg) && !reading) out.gitWrites.push({ verb: 'config', argv: g.rest, canonical: false, globals: g.globals })
+          const SUBS = new Set(['set', 'unset', 'get', 'list', 'edit', 'rename-section', 'remove-section', 'get-regexp', 'get-urlmatch', 'get-color', 'get-colorbool'])
+          const VALUE_FLAGS = new Set(['-f', '--file', '--blob', '--type', '--default', '--comment', '--value', '--url'])
+          let sub = null
+          /** @type {string[]} */
+          const pos = []
+          for (let k = 0; k < g.rest.length; k++) {
+            const a = g.rest[k]
+            if (VALUE_FLAGS.has(a)) {
+              k++
+              continue
+            }
+            if (a.startsWith('-')) continue
+            if (sub === null && pos.length === 0 && SUBS.has(a)) sub = a
+            else pos.push(a)
+          }
+          const writeFlag = g.rest.some((a) => /^(--unset|--unset-all|--replace-all|--add|-e|--edit|--rename-section|--remove-section)$/.test(a))
+          const readFlag = g.rest.some((a) => /^(--get|--get-all|--get-regexp|--get-urlmatch|-l|--list|--show-origin|--show-scope)$/.test(a))
+          const write = writeFlag || ['set', 'unset', 'edit', 'rename-section', 'remove-section'].includes(sub ?? '') || (!readFlag && sub === null && pos.length >= 2)
+          const key = pos[0] ?? ''
+          if (write && (SENSITIVE_CONFIG.test(key) || /^(edit|rename-section|remove-section)$/.test(sub ?? '') || g.rest.some((a) => /^(-e|--edit|--rename-section|--remove-section)$/.test(a))))
+            out.gitWrites.push({ verb: 'config', argv: g.rest, canonical: false, globals: g.globals })
           continue
         }
         if (g.verb === 'stash') {
@@ -320,7 +405,7 @@ export function analyzeCommand(cmd, opts = {}) {
           continue
         }
         if (g.verb === 'checkout' || g.verb === 'restore' || g.verb === 'rm' || g.verb === 'mv' || g.verb === 'clean') {
-          for (const a of g.rest) if (!a.startsWith('-') && (isProtectedPath(a, extra) || (g.verb !== 'checkout' && coversProtected(a)))) out.protectedWrites.push(a)
+          for (const a of g.rest) if (!a.startsWith('-') && (isProtectedPath(a, extra) || (g.verb !== 'checkout' && g.verb !== 'restore' && coversProtected(a)))) out.protectedWrites.push(a)
           if (g.verb === 'clean' && g.rest.some((a) => /^-[a-zA-Z]*x/.test(a))) out.protectedWrites.push('git clean -x')
           continue
         }
@@ -379,5 +464,7 @@ export function hardViolations(a) {
   for (const g of a.gitWrites)
     if (!g.canonical) reasons.push(g.verb === 'commit' || g.verb === 'push' ? `non-canonical git ${g.verb} (use plain \`git ${g.verb} …\` with no wrappers, -c or -C)` : `git ${g.verb} is not allowed during a seaworthy session`)
   for (const x of a.ambiguous) reasons.push(`cannot read this command safely: ${x}`)
+  for (const n of [...new Set(a.dangerousEnv)]) reasons.push(`setting ${n} is not allowed during a session (it can redirect git, the checks or the shell)`)
+  for (const r of [...new Set(a.protectedRefs)]) reasons.push(`${r} is seaworthy's own machinery and cannot be read or run directly; use the \`seaworthy\` command`)
   return reasons
 }

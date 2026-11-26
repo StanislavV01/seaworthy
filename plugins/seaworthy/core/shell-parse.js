@@ -30,6 +30,21 @@ function matchParen(s, i) {
   let depth = 1
   for (; i < s.length; i++) {
     const c = s[i]
+    if (c === '<' && s[i + 1] === '<' && s[i + 2] !== '<') {
+      const m = s.slice(i).match(/^<<-?[ \t]*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1[^\n]*\n/)
+      if (m) {
+        const strip = s[i + 2] === '-'
+        let j = i + m[0].length
+        while (j < s.length) {
+          const nl = s.indexOf('\n', j)
+          const line = s.slice(j, nl < 0 ? s.length : nl)
+          j = nl < 0 ? s.length : nl + 1
+          if ((strip ? line.replace(/^\t+/, '') : line).trim() === m[2]) break
+        }
+        i = j - 1
+        continue
+      }
+    }
     if (c === '\\') {
       i++
       continue
@@ -48,6 +63,15 @@ function matchParen(s, i) {
     else if (c === ')' && --depth === 0) return i
   }
   return -1
+}
+
+
+/** `$(cat <<'EOF' … EOF)` with a quoted delimiter expands nothing: it is literal text. */
+const CAT_HEREDOC = /^\s*cat\s*<<-?[ \t]*(['"])([A-Za-z_][A-Za-z0-9_]*)\1[ \t]*\n([\s\S]*?)\n[ \t]*\2[ \t]*\n?\s*$/
+/** @param {string} inner */
+export function literalHeredoc(inner) {
+  const m = inner.match(CAT_HEREDOC)
+  return m ? m[3] : null
 }
 
 /**
@@ -184,9 +208,14 @@ export function parseShell(src, depth = 0) {
             i = src.length
             break
           }
-          substitutions.push(src.slice(i + 2, end))
-          literal = false
-          word += src.slice(i, end + 1)
+          const inner = src.slice(i + 2, end)
+          const lit = literalHeredoc(inner)
+          if (lit !== null) word += lit
+          else {
+            substitutions.push(inner)
+            literal = false
+            word += src.slice(i, end + 1)
+          }
           i = end + 1
           continue
         }
@@ -216,9 +245,14 @@ export function parseShell(src, depth = 0) {
         ambiguous.push(`unterminated ${c}(`)
         break
       }
-      substitutions.push(src.slice(i + 2, end))
-      literal = false
-      word += src.slice(i, end + 1)
+      const inner = src.slice(i + 2, end)
+      const lit = c === '$' ? literalHeredoc(inner) : null
+      if (lit !== null) word += lit
+      else {
+        substitutions.push(inner)
+        literal = false
+        word += src.slice(i, end + 1)
+      }
       inWord = true
       i = end + 1
       continue

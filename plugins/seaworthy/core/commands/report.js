@@ -32,7 +32,7 @@ export async function run(args, io) {
         .reverse()
         .map((l) => ({ sha: l.split('\t')[0], subject: l.split('\t').slice(1).join('\t') }))
   }
-  const remaining = await nextStep({ input: {}, env: io.env, root, state, tampered: null, cfg, active: true })
+  const remaining = await nextStep({ input: {}, env: io.env, root, state, tampered: null, cfg, active: true, gating: true })
   const st = await statusJson(root, io.env)
   const done = !remaining && (st.ci.status === 'success' || st.ci.status === 'none')
   if (flags.final && done) {

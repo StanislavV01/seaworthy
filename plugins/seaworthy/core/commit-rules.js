@@ -28,8 +28,15 @@ export async function allowedTrailerKeys(cwd, cfg) {
 }
 
 /**
- * @typedef {{ reasons: string[], messages: string[], messageFile: string | null, trailers: string[], amend: boolean }} CommitArgs
+ * @typedef {{ reasons: string[], messages: string[], messageFile: string | null, trailers: string[], amend: boolean, pathspec: boolean }} CommitArgs
  */
+
+const KNOWN_LONG = new Set([
+  '--no-verify', '--author', '--amend', '--reuse-message', '--reedit-message', '--message', '--file', '--trailer', '--signoff',
+  '--edit', '--template', '--cleanup', '--date', '--gpg-sign', '--no-gpg-sign', '--fixup', '--squash', '--pathspec-from-file',
+  '--all', '--quiet', '--verbose', '--allow-empty', '--allow-empty-message', '--no-edit', '--dry-run', '--status', '--no-status',
+  '--untracked-files', '--only', '--include', '--no-post-rewrite', '--porcelain', '--short', '--branch', '--long', '--null',
+])
 
 /**
  * Parses `git commit` arguments and rejects the ones that bypass gates or identity.
@@ -38,12 +45,24 @@ export async function allowedTrailerKeys(cwd, cfg) {
  */
 export function parseCommitArgs(argv) {
   /** @type {CommitArgs} */
-  const r = { reasons: [], messages: [], messageFile: null, trailers: [], amend: false }
+  const r = { reasons: [], messages: [], messageFile: null, trailers: [], amend: false, pathspec: false }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
-    if (a === '--') break
+    if (a === '--') {
+      if (i < argv.length - 1) r.pathspec = true
+      break
+    }
+    if (!a.startsWith('-')) {
+      r.pathspec = true
+      continue
+    }
     const eq = a.startsWith('--') ? a.indexOf('=') : -1
     const name = eq > 0 ? a.slice(0, eq) : a
+    if (name.startsWith('--') && !KNOWN_LONG.has(name)) {
+      r.reasons.push(`unrecognised option ${name}: use full option names (git accepts abbreviations, seaworthy does not)`)
+      if (eq < 0 && argv[i + 1] && !argv[i + 1].startsWith('-')) i++
+      continue
+    }
     const val = () => (eq > 0 ? a.slice(eq + 1) : argv[++i] ?? '')
     switch (name) {
       case '--no-verify':
@@ -81,13 +100,18 @@ export function parseCommitArgs(argv) {
         val()
         r.reasons.push('--template is not allowed; pass the message with -m or -F')
         continue
+      case '--pathspec-from-file':
+      case '--only':
+      case '--include':
+        r.pathspec = true
+        if (eq < 0 && name === '--pathspec-from-file') i++
+        continue
       case '--cleanup':
       case '--date':
-      case '--gpg-sign':
       case '--fixup':
       case '--squash':
-      case '--pathspec-from-file':
-        if (eq < 0 && name !== '--gpg-sign') i++
+      case '--untracked-files':
+        if (eq < 0 && name !== '--untracked-files') i++
         continue
     }
     if (/^-[a-zA-Z]+$/.test(a)) {

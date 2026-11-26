@@ -1,5 +1,7 @@
 // @ts-check
-import { isAbsolute, relative, resolve } from 'node:path'
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
+import { isAbsolute, join, relative, resolve } from 'node:path'
+import { parseShell } from '../shell-parse.js'
 import { analyzeCommand, hardViolations, isProtectedPath } from '../bash-analyzer.js'
 import { isGreen, lintFiles } from '../checks.js'
 import { commitGate, pushGate } from '../gates.js'
@@ -7,7 +9,7 @@ import { git, headSha, treeFingerprint } from '../git.js'
 import { openEvents, scanGuard } from '../guard.js'
 import { isTerminal, logEvent, saveState } from '../state.js'
 import { startOrResume } from '../session.js'
-import { ask, block, context, deny, extraProtected, gitAliases, json, PASS } from './context.js'
+import { ask, block, context, deny, gitAliases, json, PASS, protection, resolveForWrite } from './context.js'
 
 /** @typedef {import('./context.js').HookContext} Ctx */
 /** @typedef {import('./context.js').HookResult} HookResult */
@@ -41,40 +43,126 @@ function relToRoot(ctx, p) {
   return { abs, rel: rel.startsWith('..') ? abs : rel }
 }
 
+const SYSTEM_PREFIXES = ['/usr/', '/bin/', '/sbin/', '/opt/', '/nix/', '/System/', '/Library/', '/snap/', 'C:/Program Files', 'C:/Windows']
+
 /**
- * Gate for every tool call during a session.
+ * May the agent run this script file? Only files that already existed, unchanged, when the
+ * session started (project files and installed tools) — never a script written during it.
+ * @param {Ctx} ctx
+ * @param {string} p
+ * @returns {Promise<string | null>} reason to refuse, or null
+ */
+async function scriptProblem(ctx, p) {
+  const cwd = ctx.input.cwd || ctx.root
+  const abs = resolveForWrite(cwd, p)
+  if (!existsSync(abs)) return `${p} does not exist yet; a script created in the same command cannot be run during a session`
+  const state = /** @type {import('../state.js').State} */ (ctx.state)
+  const started = Date.parse(state.started_at)
+  const rel = relative(realpathSync(ctx.root), abs).replace(/\\/g, '/')
+  const inside = !rel.startsWith('..') && !isAbsolute(rel)
+  if (!inside) {
+    const sys = SYSTEM_PREFIXES.some((x) => abs.replace(/\\/g, '/').startsWith(x)) || /\/\.(nvm|volta|bun|cargo|local\/share\/pnpm|asdf|fnm|deno)\//.test(abs)
+    if (!sys) return `${p} is outside the repository; during a session only project files and installed tools may run`
+    if (statSync(abs).mtimeMs >= started) return `${p} was changed during the session`
+    return null
+  }
+  if (/(^|\/)node_modules\//.test(rel)) return statSync(abs).mtimeMs >= started ? `${p} (in node_modules) was changed during the session` : null
+  const before = await git(ctx.root, ['rev-parse', '--verify', '-q', `${state.start_tree}:${rel}`])
+  if (before.code !== 0) return `${p} did not exist when the session started; scripts written during a session cannot be run`
+  const now = await git(ctx.root, ['hash-object', '--', rel])
+  if (now.code !== 0 || now.stdout.trim() !== before.stdout.trim()) return `${p} was modified during the session; scripts changed during a session cannot be run`
+  return null
+}
+
+/** @param {string | null} json */
+function scriptsOf(json) {
+  try {
+    const s = JSON.parse(json ?? '{}').scripts
+    return s && typeof s === 'object' ? s : {}
+  } catch {
+    return {}
+  }
+}
+
+/**
+ * Checks scripts and package.json scripts the command would run, recursively.
+ * @param {Ctx} ctx
+ * @param {import('../bash-analyzer.js').Analysis} a
+ * @param {import('../bash-analyzer.js').AnalyzeOptions} opts
+ * @param {number} depth
+ * @returns {Promise<string[]>}
+ */
+async function runProblems(ctx, a, opts, depth = 0) {
+  /** @type {string[]} */
+  const out = []
+  for (const p of a.scripts) {
+    const r = await scriptProblem(ctx, p)
+    if (r) out.push(r)
+  }
+  if (!a.packageScripts.length || depth > 3) return out
+  const state = /** @type {import('../state.js').State} */ (ctx.state)
+  const cwd = ctx.input.cwd || ctx.root
+  const pkgRel = relative(ctx.root, join(cwd, 'package.json')).replace(/\\/g, '/')
+  const before = scriptsOf((await git(ctx.root, ['show', `${state.start_tree}:${pkgRel}`])).stdout || null)
+  const nowText = existsSync(join(cwd, 'package.json')) ? readFileSync(join(cwd, 'package.json'), 'utf8') : null
+  const now = scriptsOf(nowText)
+  for (const name of a.packageScripts) {
+    for (const n of [`pre${name}`, name, `post${name}`]) {
+      if (now[n] === undefined) continue
+      if (before[n] !== now[n]) {
+        out.push(`package.json script "${n}" was added or changed during the session`)
+        continue
+      }
+      const inner = analyzeCommand(String(now[n]), opts)
+      out.push(...hardViolations(inner), ...(await runProblems(ctx, inner, opts, depth + 1)))
+    }
+  }
+  return out
+}
+
+/**
+ * Gate for every tool call while a session exists in this worktree (for any Claude Code session).
  * @param {Ctx} ctx
  * @returns {Promise<HookResult>}
  */
 export async function preToolUse(ctx) {
   const tool = ctx.input.tool_name ?? ''
   const ti = ctx.input.tool_input ?? {}
-  const extra = extraProtected(ctx.env)
   const locked = Boolean(ctx.tampered)
-  if (!ctx.active && !locked) return PASS
+  if (!ctx.gating && !locked) return PASS
+  const prot = await protection(ctx)
+  const extra = prot.protectedPaths
 
   if (['Edit', 'Write', 'MultiEdit', 'NotebookEdit'].includes(tool)) {
     const target = String(ti.file_path ?? ti.notebook_path ?? '')
     if (!target) return PASS
     const { abs, rel } = relToRoot(ctx, target)
-    if (isProtectedPath(rel, extra) || isProtectedPath(abs, extra))
-      return deny(`${rel} is protected during a session (state, config, hooks and CI workflows). Changing checks or CI needs the developer: explain what and why instead.`)
+    const real = resolveForWrite(ctx.input.cwd || ctx.root, target)
+    if (isProtectedPath(rel, extra) || isProtectedPath(abs, extra) || isProtectedPath(real, extra) || isProtectedPath(relative(realpathSync(ctx.root), real), extra))
+      return deny(`${rel} is protected during a session (state, config, git hooks, CI workflows, node_modules/.bin, seaworthy itself). Changing checks or CI needs the developer: explain what and why instead.`)
     return PASS
   }
   if (tool !== 'Bash') return PASS
 
   const command = String(ti.command ?? '')
-  const a = analyzeCommand(command, { protectedPaths: extra, aliases: await gitAliases(ctx.root) })
+  /** @type {import('../bash-analyzer.js').AnalyzeOptions} */
+  const opts = { protectedPaths: extra, hiddenPaths: prot.hiddenPaths, aliases: await gitAliases(ctx.root), resolve: prot.resolve }
+  const a = analyzeCommand(command, opts)
   if (locked) {
-    if (a.gitWrites.length || a.protectedWrites.length || a.humanOnly.length)
+    if (a.gitWrites.length || a.protectedWrites.length || a.humanOnly.length || a.protectedRefs.length || a.dangerousEnv.length)
       return deny(`the session state was tampered with (${ctx.tampered}); all git writes are frozen until the developer runs \`seaworthy stop\`.`)
     return PASS
   }
   const hard = hardViolations(a)
   if (hard.length) return deny(hard.join('; '))
+  const runs = await runProblems(ctx, a, opts)
+  if (runs.length) return deny([...new Set(runs)].join('; '))
 
   const approvalRequest = a.seaworthy.find((s) => s.sub === 'request-approval')
   if (approvalRequest && ctx.state) {
+    const parsed = parseShell(command)
+    if (a.seaworthy.length !== 1 || parsed.commands.length !== 1 || a.gitWrites.length || parsed.substitutions.length)
+      return deny('run `seaworthy request-approval <id>` on its own, one id per call, so the developer sees exactly what they approve')
     const id = approvalRequest.argv.find((x) => !x.startsWith('-')) ?? ''
     const events = await scanGuard(ctx.root, ctx.state.start_tree)
     const ev = events.find((e) => e.id === id)
