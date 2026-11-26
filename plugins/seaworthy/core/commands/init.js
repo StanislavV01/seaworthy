@@ -4,6 +4,8 @@ import { CONFIG_FILE, configFromProject, loadConfig, saveConfig } from '../confi
 import { detectProject } from '../detect.js'
 import { crossCheck, readWorkflows } from '../workflows.js'
 import { describe } from './detect.js'
+import { isGitRepo } from '../git.js'
+import { installGitHooks } from '../git-hooks.js'
 
 /**
  * `seaworthy init` shows what it found; `--yes` writes `.seaworthy.json`.
@@ -35,10 +37,11 @@ export async function run(args, io) {
 }
 
 /**
- * Filled in by the git-hooks module once it exists.
- * @param {string} _cwd
+ * @param {string} cwd
  * @returns {Promise<string | null>}
  */
-async function installHooksIfPossible(_cwd) {
-  return null
+async function installHooksIfPossible(cwd) {
+  if (!(await isGitRepo(cwd))) return null
+  const r = await installGitHooks(cwd)
+  return `${r.installed.join(', ')} in ${r.hooksDir}${r.chained.length ? ` (existing ${r.chained.join(', ')} kept and chained)` : ''}`
 }
