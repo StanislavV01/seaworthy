@@ -1,22 +1,22 @@
-# ship-loop MVP Implementation Plan
+# seaworthy MVP Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build the ship-loop core CLI, the Claude Code plugin and the Orca extension described in the design, hardened against an adversarial agent.
+**Goal:** Build the seaworthy core CLI, the Claude Code plugin and the Orca extension described in the design, hardened against an adversarial agent.
 
-**Architecture:** A zero-dependency ESM JavaScript core (`plugins/ship-loop/core/`) does all the work: detection, checks, state, guards, Bash analysis, CI and reports. Claude Code hooks, git hooks and the Orca worker are thin adapters that call the core. One repository is both the Claude Code marketplace and the Orca plugin.
+**Architecture:** A zero-dependency ESM JavaScript core (`plugins/seaworthy/core/`) does all the work: detection, checks, state, guards, Bash analysis, CI and reports. Claude Code hooks, git hooks and the Orca worker are thin adapters that call the core. One repository is both the Claude Code marketplace and the Orca plugin.
 
 **Tech Stack:** Node ≥ 20, plain ESM JS with JSDoc types checked by `tsc --checkJs`, `node:test`, git, gh CLI. Orca adapter in TypeScript without a build step.
 
-**Spec:** `docs/superpowers/specs/2026-11-26-ship-loop-design.md`
+**Spec:** `docs/superpowers/specs/2026-11-26-seaworthy-design.md`
 
 ## Global Constraints
 
-- Zero runtime dependencies in `plugins/ship-loop/`. Dev dependency allowed: `typescript` only.
+- Zero runtime dependencies in `plugins/seaworthy/`. Dev dependency allowed: `typescript` only.
 - Node ≥ 20; `"type": "module"`; every core file starts with `// @ts-check`.
 - All hooks are no-ops unless a session is active for this worktree and its `session_id` matches (spec 7.4).
 - Hook semantics: block with exit 2 + stderr, or exit 0 + one JSON object on stdout. Never exit 1 to block.
-- State at `$(git rev-parse --git-dir)/ship-loop/state.json`, `version: 1`, HMAC-SHA256 over the canonical JSON.
+- State at `$(git rev-parse --git-dir)/seaworthy/state.json`, `version: 1`, HMAC-SHA256 over the canonical JSON.
 - Caps (defaults): fix attempts per check 3; same signature 2; review rounds 2; CI cycles 3; flaky reruns per sha 1; stop-gate blocks 5; check timeout 600 s; CI watch per call ≤ 540 s; total CI wait 30 min; run discovery wait 3 min; excerpt ≤ 8,000 chars.
 - Tiers: `fast` = lint (+ typecheck); `commit` = lint, typecheck, test; `push` = commit + build.
 - Never set git identity, never `--no-verify`, never add trailers absent from the last 20 commits or `allowedTrailers`.
@@ -36,8 +36,8 @@
 
 **Files:**
 - Create: `package.json` (root, private, devDependencies `typescript`, scripts `test`, `typecheck`)
-- Create: `tsconfig.json` (`allowJs`, `checkJs`, `noEmit`, `strict`, include `plugins/ship-loop/core/**/*.js`, `test/**/*.js`)
-- Create: `plugins/ship-loop/core/cli.js`, `plugins/ship-loop/bin/ship-loop` (shim: `#!/usr/bin/env node` importing `../core/cli.js`)
+- Create: `tsconfig.json` (`allowJs`, `checkJs`, `noEmit`, `strict`, include `plugins/seaworthy/core/**/*.js`, `test/**/*.js`)
+- Create: `plugins/seaworthy/core/cli.js`, `plugins/seaworthy/bin/seaworthy` (shim: `#!/usr/bin/env node` importing `../core/cli.js`)
 - Create: `.github/workflows/ci.yml` (Node 22: `npm install`, `npm run typecheck`, `npm test`)
 - Create: `LICENSE` (MIT), `.gitignore`
 - Test: `test/cli.test.js`
@@ -47,7 +47,7 @@
 
 - [ ] Step 1: tests `prints usage and exits 0 on --help`, `unknown command exits 2 with "unknown command"`.
 - [ ] Step 2: run `npm test` → FAIL.
-- [ ] Step 3: implement router; `bin/ship-loop` calls `process.exit(await main(process.argv.slice(2), …))`.
+- [ ] Step 3: implement router; `bin/seaworthy` calls `process.exit(await main(process.argv.slice(2), …))`.
 - [ ] Step 4: `npm test && npm run typecheck` → PASS.
 - [ ] Step 5: commit `chore: repository skeleton and CLI router`.
 
@@ -78,10 +78,10 @@
 
 **Interfaces:**
 - Consumes: `detectProject`, `readWorkflows`, `crossCheck`.
-- Produces: `.ship-loop.json` schema `{ version: 1, packageManager, checks, tiers, caps: {...defaults}, autonomy: 'careful'|'normal'|'auto', allowedTrailers: string[] }`; `loadConfig(root) => Promise<Config|null>`; `saveConfig(root, cfg)`; `configHash(cfg) => string` (sha256 of canonical JSON).
+- Produces: `.seaworthy.json` schema `{ version: 1, packageManager, checks, tiers, caps: {...defaults}, autonomy: 'careful'|'normal'|'auto', allowedTrailers: string[] }`; `loadConfig(root) => Promise<Config|null>`; `saveConfig(root, cfg)`; `configHash(cfg) => string` (sha256 of canonical JSON).
 
 - [ ] Step 1: tests — `init --yes` writes config with spec default caps and `autonomy: 'normal'`; `canonical JSON hash is key-order independent`; `invalid config rejected with field name`.
-- [ ] Steps 2–4. Step 5: commit `feat(core): ship-loop.json config and init command`.
+- [ ] Steps 2–4. Step 5: commit `feat(core): seaworthy.json config and init command`.
 
 ### Task 5: Git primitives and tree fingerprint
 
@@ -98,7 +98,7 @@
 **Files:** Create `core/state.js`, `core/integrity.js`; Test `test/state.test.js`.
 
 **Interfaces:**
-- Produces: `State` type per spec 7.4 (+ `config_hash`, `start_tree`, `base_sha`, `session_id`, `phase`, `counters`, `checks: {[tier]: {tree, ok, failed: string[], at}}`, `review`, `guard_events`, `commits`, `ci`); `loadState(cwd) => Promise<State|null>` (throws `TamperError` on bad HMAC); `saveState(cwd, state)`; `keyPath(env)` = `${CLAUDE_PLUGIN_DATA}/key` else `~/.config/ship-loop/key` (created 0600).
+- Produces: `State` type per spec 7.4 (+ `config_hash`, `start_tree`, `base_sha`, `session_id`, `phase`, `counters`, `checks: {[tier]: {tree, ok, failed: string[], at}}`, `review`, `guard_events`, `commits`, `ci`); `loadState(cwd) => Promise<State|null>` (throws `TamperError` on bad HMAC); `saveState(cwd, state)`; `keyPath(env)` = `${CLAUDE_PLUGIN_DATA}/key` else `~/.config/seaworthy/key` (created 0600).
 
 - [ ] Step 1: tests — `round trip`; `edited state fails verification with TamperError`; `missing key file is created once`; `state path is per worktree`.
 - [ ] Steps 2–4. Step 5: commit `feat(core): signed per-worktree state`.
@@ -109,7 +109,7 @@
 
 **Interfaces:**
 - Consumes: `loadConfig`, `treeFingerprint`, `loadState/saveState`.
-- Produces: `runTier(cwd, tier, {files?: string[], timeoutMs?: number}) => Promise<{tier, tree, ok, failed: string[], logs: Record<string,string>}>` (logs written to `…/ship-loop/runs/<ts>-<check>.log`); `isGreen(state, tier, tree) => boolean` (a passing `push` result also satisfies `commit` for the same tree).
+- Produces: `runTier(cwd, tier, {files?: string[], timeoutMs?: number}) => Promise<{tier, tree, ok, failed: string[], logs: Record<string,string>}>` (logs written to `…/seaworthy/runs/<ts>-<check>.log`); `isGreen(state, tier, tree) => boolean` (a passing `push` result also satisfies `commit` for the same tree).
 
 - [ ] Step 1: tests — `records result bound to fingerprint`; `edit after green → isGreen false`; `timeout marks check failed with "timeout"`; `push green implies commit green`.
 - [ ] Steps 2–4. Step 5: commit `feat(core): tiered check runner bound to tree`.
@@ -129,9 +129,9 @@
 **Files:** Create `core/bash-analyzer.js`; Test `test/bash-analyzer.test.js` (table-driven).
 
 **Interfaces:**
-- Produces: `analyzeCommand(cmd: string) => { gitWrites: {verb: string, argv: string[], canonical: boolean}[], protectedWrites: string[], humanOnly: string[], ambiguous: boolean }`. Protected paths: `.git/`, `.ship-loop.json`, `.github/workflows/`, the key path, the plugin dir (passed in via options).
+- Produces: `analyzeCommand(cmd: string) => { gitWrites: {verb: string, argv: string[], canonical: boolean}[], protectedWrites: string[], humanOnly: string[], ambiguous: boolean }`. Protected paths: `.git/`, `.seaworthy.json`, `.github/workflows/`, the key path, the plugin dir (passed in via options).
 
-- [ ] Step 1: table tests (≥ 25 rows), e.g. `git commit -m x` → canonical commit; `sh -c "git commit -m x"` → commit, not canonical; `eval "git push"`; `git -c alias.c=commit c -m x`; `git -C . commit`; `x=$(git commit-tree …) && git update-ref refs/heads/main $x`; `git config core.hooksPath /tmp`; `echo '{}' > .git/ship-loop/state.json` → protected write; `sed -i s/x/y/ .ship-loop.json`; `python -c "open('.ship-loop.json','w')"` → protected write (interpreter with inline code naming a protected path); `ship-loop approve g1` → humanOnly; `git status && npm test` → nothing; unterminated quote with `git push` inside → ambiguous.
+- [ ] Step 1: table tests (≥ 25 rows), e.g. `git commit -m x` → canonical commit; `sh -c "git commit -m x"` → commit, not canonical; `eval "git push"`; `git -c alias.c=commit c -m x`; `git -C . commit`; `x=$(git commit-tree …) && git update-ref refs/heads/main $x`; `git config core.hooksPath /tmp`; `echo '{}' > .git/seaworthy/state.json` → protected write; `sed -i s/x/y/ .seaworthy.json`; `python -c "open('.seaworthy.json','w')"` → protected write (interpreter with inline code naming a protected path); `seaworthy approve g1` → humanOnly; `git status && npm test` → nothing; unterminated quote with `git push` inside → ambiguous.
 - [ ] Steps 2–4. Step 5: commit `feat(core): bash analyzer for git writes and protected paths`.
 
 ### Task 10: Commit rules and trailers
@@ -150,9 +150,9 @@
 
 **Interfaces:**
 - Consumes: Tasks 5–10.
-- Produces: `ship-loop hook <name>` reads stdin JSON, returns `{exitCode, stdout?, stderr?}`. Behaviors per spec 7.4, 7.6, 7.12: UserPromptSubmit claims session on `/ship-loop:ship` (stores `session_id`, `start_tree`, `base_sha`, `config_hash`); PreToolUse = protected paths (Edit/Write/MultiEdit/NotebookEdit and Bash via analyzer) → human-only → git writes (non-canonical deny; commit gate; push gate with `ask` in normal/careful); PostToolUse lints the edited file with the `lint` check scoped by `--files` when the script supports it, else skips; Stop gate with `stop_blocks` cap 5; SubagentStop requires JSON verdict from `ship-loop:reviewer`; SessionStart injects summary.
+- Produces: `seaworthy hook <name>` reads stdin JSON, returns `{exitCode, stdout?, stderr?}`. Behaviors per spec 7.4, 7.6, 7.12: UserPromptSubmit claims session on `/seaworthy:ship` (stores `session_id`, `start_tree`, `base_sha`, `config_hash`); PreToolUse = protected paths (Edit/Write/MultiEdit/NotebookEdit and Bash via analyzer) → human-only → git writes (non-canonical deny; commit gate; push gate with `ask` in normal/careful); PostToolUse lints the edited file with the `lint` check scoped by `--files` when the script supports it, else skips; Stop gate with `stop_blocks` cap 5; SubagentStop requires JSON verdict from `seaworthy:reviewer`; SessionStart injects summary.
 
-- [ ] Step 1: tests — `noop when no session` (every hook); `claims session only on /ship-loop:ship`; `commit denied when checks stale`; `commit denied with unresolved guard`; `commit allowed when green + review approved for same tree`; `request-approval answered with ask`; `approve/stop/waive from agent denied`; `push to default branch denied`; `force push denied, force-with-lease asks`; `stop blocked with next step text, allowed after 5 blocks and phase=escalated`; `reviewer without JSON verdict blocked`; `tampered state → escalated, all writes denied`.
+- [ ] Step 1: tests — `noop when no session` (every hook); `claims session only on /seaworthy:ship`; `commit denied when checks stale`; `commit denied with unresolved guard`; `commit allowed when green + review approved for same tree`; `request-approval answered with ask`; `approve/stop/waive from agent denied`; `push to default branch denied`; `force push denied, force-with-lease asks`; `stop blocked with next step text, allowed after 5 blocks and phase=escalated`; `reviewer without JSON verdict blocked`; `tampered state → escalated, all writes denied`.
 - [ ] Steps 2–4. Step 5: commit `feat(core): claude code hook dispatcher`.
 
 ### Task 12: Git hooks backstop
@@ -160,7 +160,7 @@
 **Files:** Create `core/git-hooks.js`, `core/commands/githook.js`; Test `test/git-hooks.test.js`.
 
 **Interfaces:**
-- Produces: `installGitHooks(cwd) => Promise<{installed: string[], chained: string[]}>` (writes `pre-commit`, `commit-msg`, `pre-push` into the effective hooks dir — `core.hooksPath` or `.git/hooks` — preserving an existing hook as `<name>.ship-loop-prev` and calling it first); `ship-loop githook <name> [args]` re-verifies gates when a session is active, else exits 0.
+- Produces: `installGitHooks(cwd) => Promise<{installed: string[], chained: string[]}>` (writes `pre-commit`, `commit-msg`, `pre-push` into the effective hooks dir — `core.hooksPath` or `.git/hooks` — preserving an existing hook as `<name>.seaworthy-prev` and calling it first); `seaworthy githook <name> [args]` re-verifies gates when a session is active, else exits 0.
 
 - [ ] Step 1: tests — `existing hook still runs`; `husky dir (.husky) respected via core.hooksPath`; `commit refused by git when gates red during session`; `passes outside session`; `trailer rejected in commit-msg`.
 - [ ] Steps 2–4. Step 5: commit `feat(core): git hooks backstop`.
@@ -180,22 +180,22 @@
 **Files:** Create `core/report.js`, `core/commands/{status,report,stop,approve,request-approval}.js`; Test `test/report.test.js`.
 
 **Interfaces:**
-- Produces: `statusJson(cwd) => Promise<{tracked: boolean, phase, checks: {[tier]: 'green'|'red'|'stale'|'none'}, guard: {open: number}, review, ci, updatedAt}>` (also used by Orca); `statusLine(cwd) => string` e.g. `ship-loop ▸ checks ✓✓✗· (test 2/3) · review — · CI —`; `renderReport(state) => {markdown, json}` — never claims success when phase ≠ `done`; `approve <id>`, `waive <id>`, `stop` record the human decision (the agent is kept away from them by the PreToolUse analyzer, Tasks 9 and 11, not by these commands); `request-approval <id>` is the agent's allowed command: the PreToolUse hook answers it with `permissionDecision: "ask"` and a reason quoting the guard item, and on success it records the approval.
+- Produces: `statusJson(cwd) => Promise<{tracked: boolean, phase, checks: {[tier]: 'green'|'red'|'stale'|'none'}, guard: {open: number}, review, ci, updatedAt}>` (also used by Orca); `statusLine(cwd) => string` e.g. `seaworthy ▸ checks ✓✓✗· (test 2/3) · review — · CI —`; `renderReport(state) => {markdown, json}` — never claims success when phase ≠ `done`; `approve <id>`, `waive <id>`, `stop` record the human decision (the agent is kept away from them by the PreToolUse analyzer, Tasks 9 and 11, not by these commands); `request-approval <id>` is the agent's allowed command: the PreToolUse hook answers it with `permissionDecision: "ask"` and a reason quoting the guard item, and on success it records the approval.
 
 - [ ] Step 1: tests — `untracked repo → tracked:false`; status line for the example state; `escalated report lists not-done items`; `approve records decision with reason`.
 - [ ] Steps 2–4. Step 5: commit `feat(core): status, status line and report`.
 
 ### Task 15: Claude Code plugin packaging
 
-**Files:** Create `.claude-plugin/marketplace.json`, `plugins/ship-loop/.claude-plugin/plugin.json`, `plugins/ship-loop/hooks/hooks.json`, `plugins/ship-loop/skills/{ship,init,status,stop}/SKILL.md` (+ `skills/ship/playbooks/{commits,ci-fix,report}.md`), `plugins/ship-loop/agents/reviewer.md`; Test `test/plugin-manifest.test.js`.
+**Files:** Create `.claude-plugin/marketplace.json`, `plugins/seaworthy/.claude-plugin/plugin.json`, `plugins/seaworthy/hooks/hooks.json`, `plugins/seaworthy/skills/{ship,init,status,stop}/SKILL.md` (+ `skills/ship/playbooks/{commits,ci-fix,report}.md`), `plugins/seaworthy/agents/reviewer.md`; Test `test/plugin-manifest.test.js`.
 
 **Interfaces:**
-- Consumes: `ship-loop hook <name>` for every hook entry: `node "${CLAUDE_PLUGIN_ROOT}/core/cli.js" hook <name>`; PreToolUse matcher `Edit|Write|MultiEdit|NotebookEdit|Bash`; PostToolUse `Edit|Write|MultiEdit`; SubagentStop `^ship-loop:reviewer$`; SessionStart `resume|compact`; UserPromptSubmit and Stop without matcher.
-- `ship` skill: `disable-model-invocation: true`, `argument-hint: "[task] [--auto|--careful]"`, phases per spec 7.4/7.7, calls `ship-loop check`, `guard`, `ci …`, `report`; reviewer gets diff path + task, returns JSON verdict.
+- Consumes: `seaworthy hook <name>` for every hook entry: `node "${CLAUDE_PLUGIN_ROOT}/core/cli.js" hook <name>`; PreToolUse matcher `Edit|Write|MultiEdit|NotebookEdit|Bash`; PostToolUse `Edit|Write|MultiEdit`; SubagentStop `^seaworthy:reviewer$`; SessionStart `resume|compact`; UserPromptSubmit and Stop without matcher.
+- `ship` skill: `disable-model-invocation: true`, `argument-hint: "[task] [--auto|--careful]"`, phases per spec 7.4/7.7, calls `seaworthy check`, `guard`, `ci …`, `report`; reviewer gets diff path + task, returns JSON verdict.
 
 - [ ] Step 1: test parses all JSON manifests, asserts every hook command targets an existing `hook` subcommand and every skill has frontmatter `name` + `description`.
 - [ ] Steps 2–4. Step 5: commit `feat(plugin): claude code plugin, skills and reviewer agent`.
-- [ ] Step 6 (author, local): `claude plugin validate --strict plugins/ship-loop` and a `--plugin-dir` smoke run on a fixture repo.
+- [ ] Step 6 (author, local): `claude plugin validate --strict plugins/seaworthy` and a `--plugin-dir` smoke run on a fixture repo.
 
 ### Task 16: Red-team suite
 
@@ -204,7 +204,7 @@
 **Interfaces:**
 - Consumes: hook dispatcher (Task 11) fed with synthetic PreToolUse/Stop events in a temp repo with an active session, plus the git hooks (Task 12) for direct `git` calls.
 
-- [ ] Step 1: write cases (each `{name, setup, attempt, expect: 'denied'|'detected'}`), including all Task 9 rows, plus: replace lint check with `true` in `.ship-loop.json`; delete failing test then add `it.skip` stub; add fake `test` script; `git commit --no-verify`; `git -c core.hooksPath=/dev/null commit`; edit state then commit; trailer via `-F`; `git push --force`; `ship-loop stop` from agent; `ship-loop approve` from agent; write to key file.
+- [ ] Step 1: write cases (each `{name, setup, attempt, expect: 'denied'|'detected'}`), including all Task 9 rows, plus: replace lint check with `true` in `.seaworthy.json`; delete failing test then add `it.skip` stub; add fake `test` script; `git commit --no-verify`; `git -c core.hooksPath=/dev/null commit`; edit state then commit; trailer via `-F`; `git push --force`; `seaworthy stop` from agent; `seaworthy approve` from agent; write to key file.
 - [ ] Step 2: run → failures show the gaps; Step 3: fix core until all pass; Step 4: PASS.
 - [ ] Step 5: commit `test: red-team suite of gate bypass attempts`.
 
@@ -216,7 +216,7 @@
 - Consumes: `statusJson`, `runTier`, `analyzeCommand` + gate logic from `core` by relative import.
 - Produces: panel request `ship.rows` → `{workspaceId, name, branch, agentState, status: StatusJson|null}[]`; `ship.check` → runs commit tier in one worktree.
 
-- [ ] Step 1: worker — on `agent.status.changed` with `state === 'done'`: resolve via `workspace.list`, skip if `hostId` not `local`/null, folder workspace or no `.ship-loop.json`; debounce 10 s per worktree; run commit tier; on red `notifications.show({title: 'Done, but red', body: '<branch>: <failed checks>'})`; update status bar `ship ✓ green/tracked`.
+- [ ] Step 1: worker — on `agent.status.changed` with `state === 'done'`: resolve via `workspace.list`, skip if `hostId` not `local`/null, folder workspace or no `.seaworthy.json`; debounce 10 s per worktree; run commit tier; on red `notifications.show({title: 'Done, but red', body: '<branch>: <failed checks>'})`; update status bar `ship ✓ green/tracked`.
 - [ ] Step 2: panel — table of rows with "Run checks" button.
 - [ ] Step 3: opt-in hooks honoring the two settings (no-op when off).
 - [ ] Step 4 (author, local): `pnpm validate:plugin <path>` from an Orca checkout; `orca plugin dev` load; `orca plugin dev emit . agent.status.changed --data …` against a red fixture worktree → notification appears.
