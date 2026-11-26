@@ -1,6 +1,6 @@
 // @ts-check
 import { spawn } from 'node:child_process'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { loadConfig } from './config.js'
 import { topLevel, treeFingerprint } from './git.js'
@@ -76,7 +76,10 @@ export async function runTier(cwd, tier, opts = {}) {
   }
   const after = await treeFingerprint(root)
   if (after !== tree) failed.push('tree changed during checks')
-  return { tier, tree, ok: failed.length === 0, failed, logs, ran: ids }
+  /** @type {TierResult} */
+  const result = { tier, tree, ok: failed.length === 0, failed, logs, ran: ids }
+  await writeFile(join(runs, `last-${tier}.json`), JSON.stringify({ ...result, at: new Date().toISOString() }) + '\n')
+  return result
 }
 
 /**
@@ -122,4 +125,25 @@ export function recordResult(state, r) {
   state.checks[r.tier] = { tree: r.tree, ok: r.ok, failed: r.failed, at: new Date().toISOString(), logs: r.logs }
   for (const id of r.failed) state.counters.fix_attempts[id] = (state.counters.fix_attempts[id] ?? 0) + 1
   logEvent(state, 'checks', `${r.tier}: ${r.ok ? 'green' : `red (${r.failed.join(', ')})`}`)
+}
+
+/**
+ * The last result per tier, recorded even outside a session (informational, unsigned: never
+ * used by a gate, only by status displays such as the Orca panel).
+ * @param {string} cwd
+ * @returns {Promise<Partial<Record<import('./state.js').Tier, import('./state.js').CheckResult>>>}
+ */
+export async function lastResults(cwd) {
+  const { runs } = await statePaths(cwd)
+  /** @type {Partial<Record<import('./state.js').Tier, import('./state.js').CheckResult>>} */
+  const out = {}
+  for (const tier of /** @type {import('./state.js').Tier[]} */ (['fast', 'commit', 'push'])) {
+    try {
+      const r = JSON.parse(await readFile(join(runs, `last-${tier}.json`), 'utf8'))
+      out[tier] = { tree: r.tree, ok: r.ok, failed: r.failed, at: r.at }
+    } catch {
+      /* none yet */
+    }
+  }
+  return out
 }

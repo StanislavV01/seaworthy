@@ -1,0 +1,87 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      body { margin: 0; padding: 10px; font: 12px/1.45 system-ui, sans-serif; color: var(--orca-foreground, #ddd); background: var(--orca-background, transparent); }
+      header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+      h1 { font-size: 13px; margin: 0; flex: 1; }
+      button { padding: 3px 8px; border: 1px solid var(--orca-border, #555); border-radius: 6px; background: var(--orca-secondary, #2a2a2a); color: inherit; cursor: pointer; font: inherit; }
+      button:disabled { opacity: 0.5; cursor: default; }
+      .row { border: 1px solid var(--orca-border, #444); border-radius: 8px; padding: 8px; margin-bottom: 8px; }
+      .top { display: flex; align-items: center; gap: 6px; }
+      .name { font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .pill { border-radius: 999px; padding: 1px 8px; font-size: 11px; border: 1px solid currentColor; }
+      .ready { color: var(--orca-success, #3fb950); }
+      .blocked, .tampered { color: var(--orca-destructive, #f85149); }
+      .running, .untracked { color: var(--orca-muted-foreground, #999); }
+      .grid { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; margin-top: 6px; color: var(--orca-muted-foreground, #aaa); }
+      .grid b { color: var(--orca-foreground, #ddd); font-weight: 500; }
+      .empty { color: var(--orca-muted-foreground, #999); }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Ship Score</h1>
+      <button id="refresh">Refresh</button>
+    </header>
+    <div id="rows" class="empty">Loading…</div>
+    <script>
+      'use strict'
+      var rowsEl = document.getElementById('rows')
+      var MARK = { green: '✓', red: '✗', stale: '◌', none: '·' }
+
+      function esc(s) {
+        return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+          return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]
+        })
+      }
+
+      function rowHtml(r) {
+        var st = r.status
+        var head = '<div class="top"><span class="name" title="' + esc(r.path) + '">' + esc(r.branch || r.name) + '</span>' +
+          '<span class="pill ' + r.verdict + '">' + r.verdict + '</span>' +
+          (st ? '<button data-id="' + esc(r.workspaceId) + '">Run checks</button>' : '') + '</div>'
+        if (!st) return '<div class="row">' + head + '<div class="grid"><span>agent</span><b>' + esc(r.agentState || '—') + '</b><span>seaworthy</span><b>not set up (run seaworthy init)</b></div></div>'
+        var guard = st.guard.open ? '⚠ ' + st.guard.open + ' open (' + esc(st.guard.ids.join(', ')) + ')' : 'clear'
+        return '<div class="row">' + head + '<div class="grid">' +
+          '<span>agent</span><b>' + esc(r.agentState || '—') + '</b>' +
+          '<span>checks</span><b>fast ' + MARK[st.checks.fast] + ' · commit ' + MARK[st.checks.commit] + ' · push ' + MARK[st.checks.push] + (st.failed.length ? ' (' + esc(st.failed.join(', ')) + ')' : '') + '</b>' +
+          '<span>guard</span><b>' + guard + '</b>' +
+          '<span>review</span><b>' + esc(st.review) + '</b>' +
+          '<span>CI</span><b>' + esc(st.ci.status) + (st.ci.prUrl ? ' · PR' : '') + '</b>' +
+          (st.tampered ? '<span>state</span><b>⚠ tampered</b>' : '') +
+          (st.escalation ? '<span>escalated</span><b>' + esc(st.escalation) + '</b>' : '') +
+          '</div></div>'
+      }
+
+      function render(rows) {
+        if (!rows.length) {
+          rowsEl.className = 'empty'
+          rowsEl.textContent = 'No local git worktrees in Orca yet.'
+          return
+        }
+        rowsEl.className = ''
+        rowsEl.innerHTML = rows.map(rowHtml).join('')
+      }
+
+      function load() {
+        orca.plugin.request('ship.rows', {}, { timeoutMs: 60000 }).then(render, function (err) {
+          rowsEl.className = 'empty'
+          rowsEl.textContent = 'Could not load: ' + (err && err.message ? err.message : err)
+        })
+      }
+
+      rowsEl.addEventListener('click', function (e) {
+        var b = e.target.closest('button[data-id]')
+        if (!b) return
+        b.disabled = true
+        b.textContent = 'Running…'
+        orca.plugin.request('ship.check', { workspaceId: b.getAttribute('data-id') }, { timeoutMs: 120000 }).then(load, load)
+      })
+      document.getElementById('refresh').addEventListener('click', load)
+      orca.plugin.on('ship.changed', load)
+      load()
+    </script>
+  </body>
+</html>

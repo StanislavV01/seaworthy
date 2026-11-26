@@ -1,0 +1,59 @@
+{
+  "$schema": "https://raw.githubusercontent.com/stablyai/orca/main/docs/schemas/plugins/orca-plugin.v2.schema.json",
+  "manifestVersion": 2,
+  "execution": "trusted-worker",
+  "id": "seaworthy",
+  "name": "seaworthy",
+  "version": "0.1.0",
+  "description": "Catches agents that say \"done\" on red code: runs each worktree's own checks when an agent finishes, and ranks worktrees by readiness in a Ship Score panel.",
+  "author": { "name": "Stanislav", "url": "https://github.com/StanislavV01" },
+  "repository": "https://github.com/StanislavV01/seaworthy",
+  "homepage": "https://github.com/StanislavV01/seaworthy",
+  "license": "MIT",
+  "engines": { "orca": ">=1.4.248" },
+  "pluginApi": 1,
+  "main": "orca/worker.ts",
+  "contributes": {
+    "panels": [{ "id": "ship-score", "title": "Ship Score", "icon": "check", "entry": "orca/panel.html" }],
+    "commands": [
+      { "id": "seaworthy.refresh", "title": "seaworthy: Refresh Ship Score" },
+      { "id": "seaworthy.checkFocused", "title": "seaworthy: Run commit checks in this workspace", "when": "workspace" }
+    ],
+    "events": [{ "on": "agent.status.changed" }, { "on": "workspace.removed" }],
+    "hooks": [
+      { "event": "agent.launch.before", "onError": "pass" },
+      { "event": "agent.tool.before", "onError": "pass" }
+    ],
+    "settings": [
+      {
+        "key": "notifyDoneButRed",
+        "title": "Notify when an agent says done but checks fail",
+        "type": "boolean",
+        "default": true
+      },
+      {
+        "key": "autoAttachClaudePlugin",
+        "title": "Attach the seaworthy Claude Code plugin to Claude agents Orca launches",
+        "description": "Adds --plugin-dir for this plugin's Claude Code part to local Claude launches.",
+        "type": "boolean",
+        "default": false
+      },
+      {
+        "key": "gateClaudeCommits",
+        "title": "Gate Claude's git commit and push in Orca with seaworthy's rules",
+        "description": "Applies the same checks, review and tamper-guard rules as the Claude Code hooks to Claude Code agents running in Orca, during a seaworthy session.",
+        "type": "boolean",
+        "default": false
+      }
+    ],
+    "statusBarItems": [
+      { "id": "ship-score", "text": "seaworthy", "icon": "check", "tooltip": "seaworthy Ship Score", "command": "seaworthy.refresh" }
+    ]
+  },
+  "capabilities": [
+    { "kind": "workspace:read" },
+    { "kind": "agent:read" },
+    { "kind": "notifications:show" },
+    { "kind": "settings:own" }
+  ]
+}

@@ -1,6 +1,7 @@
 // @ts-check
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
+import { lastResults } from './checks.js'
 import { gitHooksInstalled } from './git-hooks.js'
 import { headSha, isGitRepo, topLevel, treeFingerprint } from './git.js'
 import { openEvents, scanGuard } from './guard.js'
@@ -78,6 +79,11 @@ export async function statusJson(cwd, env) {
   }
   const tree = await treeFingerprint(root)
   if (!state) {
+    const last = await lastResults(root)
+    /** @type {any} */
+    const pseudo = { checks: last }
+    st.checks = { fast: tierStatus(pseudo, 'fast', tree), commit: tierStatus(pseudo, 'commit', tree), push: tierStatus(pseudo, 'push', tree) }
+    st.failed = [...new Set([...(last.push?.tree === tree ? last.push.failed : []), ...(last.commit?.tree === tree ? last.commit.failed : [])])]
     return st
   }
   st.session = true
