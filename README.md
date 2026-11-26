@@ -130,8 +130,8 @@ detected (CI runs them on every push):
 
 | Category | Attempts | Examples |
 |---|---|---|
-| Hidden git writes | 25 | `sh -c`, `eval`, `xargs`, `find -exec`, background `&`, `$GIT`, `$'\x67it'`, here-doc into `sh`, pipe into `bash`, `git -c alias…`, `commit-tree`+`update-ref`, rebase / reset / cherry-pick, `--no-verify`, `--author`, `--amend` |
-| Gate tampering | 14 | edit / copy / `tee` / `dd` / delete the state, swap a check in `.seaworthy.json`, delete git hooks, `core.hooksPath`, change identity, self-approve, stop or re-claim the session, read-and-delete the key |
+| Git writes around the gates | 22 | a plain commit while red, `sh -c`, `eval`, `xargs`, `find -exec`, background `&`, `$GIT`, `$'\x67it'`, here-doc into `sh`, pipe into `bash`, `node -e` shelling out, `git -c alias…`, `-C`/`--git-dir`, `commit-tree`+`update-ref`, rebase / reset / cherry-pick, `--no-verify`, `--author`, `--amend` |
+| Gate tampering | 19 | edit / copy / `tee` / `dd` / delete the state, swap a check in `.seaworthy.json` (sed, python), move the config, `rm -rf .`, delete git hooks, `core.hooksPath` (config and `-c`), change identity, self-approve, waive, stop or re-claim the session, read-and-delete the key |
 | Protected files via tools | 4 | Write/Edit `.seaworthy.json`, git hooks, CI workflow, state |
 | Around Claude Code entirely | 3 | commit / push from a script, trailer smuggled via `-F` |
 | Test & check weakening | 6 | delete the failing test, `it.skip` stub, remove a case, `@ts-nocheck`, fake `test` script, `strict: false` |
