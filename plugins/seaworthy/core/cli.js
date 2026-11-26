@@ -14,6 +14,8 @@ import { pathToFileURL } from 'node:url'
 
 /** @type {Record<string, { summary: string, load: () => Promise<{ run: Command }> }>} */
 export const COMMANDS = {
+  init: { summary: 'Detect checks and write .seaworthy.json', load: () => import('./commands/init.js') },
+  detect: { summary: 'Print detected project config', load: () => import('./commands/detect.js') },
 }
 
 export function usage() {
