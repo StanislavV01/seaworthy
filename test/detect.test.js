@@ -50,3 +50,9 @@ test('tiers', async () => {
 test('no package.json is a clear error', async () => {
   await assert.rejects(detectProject(tmp()), /no package.json/)
 })
+
+test('per-file lint command for known linters', async () => {
+  const p = await fx('pnpm')
+  assert.equal(p.checks[0].perFile, 'pnpm exec eslint {files}')
+  assert.equal((await fx('npm')).checks[0].perFile, 'npx eslint {files}')
+})

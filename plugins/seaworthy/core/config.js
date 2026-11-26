@@ -99,6 +99,8 @@ export function validateConfig(c) {
   c.checks.forEach((/** @type {any} */ ch, /** @type {number} */ i) => {
     if (!CHECK_IDS.includes(ch?.id)) bad(`checks[${i}].id`, `must be one of ${CHECK_IDS.join(', ')}`)
     if (typeof ch.cmd !== 'string' || !ch.cmd.trim()) bad(`checks[${i}].cmd`, 'must be a non-empty string')
+    if (ch.perFile !== undefined && (typeof ch.perFile !== 'string' || !ch.perFile.includes('{files}')))
+      bad(`checks[${i}].perFile`, 'must be a string containing {files}')
   })
   const ids = new Set(c.checks.map((/** @type {any} */ ch) => ch.id))
   for (const tier of ['fast', 'commit', 'push']) {

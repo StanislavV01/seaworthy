@@ -16,6 +16,7 @@ import { pathToFileURL } from 'node:url'
 export const COMMANDS = {
   init: { summary: 'Detect checks and write .seaworthy.json', load: () => import('./commands/init.js') },
   detect: { summary: 'Print detected project config', load: () => import('./commands/detect.js') },
+  check: { summary: 'Run checks for a tier and record the result', load: () => import('./commands/check.js') },
 }
 
 export function usage() {

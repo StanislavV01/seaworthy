@@ -5,7 +5,7 @@ import { join } from 'node:path'
 
 /** @typedef {'npm' | 'pnpm' | 'yarn' | 'bun'} PackageManager */
 /** @typedef {'lint' | 'typecheck' | 'test' | 'build'} CheckId */
-/** @typedef {{ id: CheckId, cmd: string, script: string }} Check */
+/** @typedef {{ id: CheckId, cmd: string, script: string, perFile?: string }} Check */
 /** @typedef {{ fast: CheckId[], commit: CheckId[], push: CheckId[] }} Tiers */
 /** @typedef {{ packageManager: PackageManager, checks: Check[], tiers: Tiers }} ProjectConfig */
 
@@ -51,6 +51,21 @@ export function runCommand(pm, script) {
   return `${pm} run ${script}`
 }
 
+/** @type {Record<PackageManager, string>} */
+const EXEC = { npm: 'npx', pnpm: 'pnpm exec', yarn: 'yarn', bun: 'bunx' }
+
+/**
+ * A per-file lint command for well-known linters, with `{files}` as the placeholder.
+ * @param {PackageManager} pm
+ * @param {string} script the script body, e.g. "eslint ."
+ * @returns {string | undefined}
+ */
+export function perFileLint(pm, script) {
+  const m = script.trim().match(/^(eslint|oxlint|biome lint|biome check)\b/)
+  if (!m) return undefined
+  return `${EXEC[pm]} ${m[1]} {files}`
+}
+
 /**
  * @param {Check[]} checks
  * @returns {Tiers}
@@ -84,7 +99,13 @@ export async function detectProject(root) {
     const script = SCRIPT_NAMES[id].find((s) => typeof scripts[s] === 'string' && scripts[s].trim() !== '')
     if (!script) continue
     if (id === 'test' && NPM_PLACEHOLDER.test(scripts[script])) continue
-    checks.push({ id, cmd: runCommand(pm, script), script })
+    /** @type {Check} */
+    const check = { id, cmd: runCommand(pm, script), script }
+    if (id === 'lint') {
+      const pf = perFileLint(pm, scripts[script])
+      if (pf) check.perFile = pf
+    }
+    checks.push(check)
   }
   return { packageManager: pm, checks, tiers: tiersFor(checks) }
 }
