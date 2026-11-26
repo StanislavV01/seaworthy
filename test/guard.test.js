@@ -93,3 +93,13 @@ test('moving a test out of a test location counts as deletion', async () => {
   const t = await types(dir, start)
   assert.ok(t.includes('test_deleted:src/a.test.ts'), t.join())
 })
+
+test('guard command exits 1 with open events', async () => {
+  const { main } = await import('../plugins/seaworthy/core/cli.js')
+  const { captureIO } = await import('./helpers.js')
+  const { dir } = await session({})
+  rmSync(join(dir, 'src/a.test.ts'))
+  const c = captureIO(dir)
+  assert.equal(await main(['guard'], c.io), 1)
+  assert.match(c.out(), /✗ open\s+g-\w+\s+test_deleted\s+src\/a.test.ts/)
+})
