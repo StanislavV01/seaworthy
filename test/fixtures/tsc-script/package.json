@@ -1,0 +1,1 @@
+{"name":"a","scripts":{"tsc":"tsc --noEmit","test":"vitest"}}

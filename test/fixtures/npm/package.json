@@ -1,0 +1,1 @@
+{"name":"a","scripts":{"lint":"eslint .","typecheck":"tsc --noEmit","test":"node --test","build":"tsc"}}
