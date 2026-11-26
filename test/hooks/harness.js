@@ -47,8 +47,10 @@ export function setup(cfg = CFG) {
   }
   const bash = (/** @type {string} */ command) => hook('pre-tool-use', { tool_name: 'Bash', tool_input: { command } })
   const start = (prompt = '/seaworthy:ship add a feature') => hook('user-prompt-submit', { prompt })
-  const approve = () =>
-    hook('subagent-stop', { agent_type: 'seaworthy:reviewer', last_assistant_message: 'Looks good.\n```json\n{"verdict":"approve","findings":[]}\n```' })
+  const approve = async () => {
+    await hook('subagent-start', { agent_type: 'seaworthy:reviewer' })
+    return hook('subagent-stop', { agent_type: 'seaworthy:reviewer', last_assistant_message: 'Looks good.\n```json\n{"verdict":"approve","findings":[]}\n```' })
+  }
   return { dir, env, hook, cli, bash, start, approve }
 }
 

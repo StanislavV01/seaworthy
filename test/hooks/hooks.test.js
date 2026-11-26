@@ -133,6 +133,7 @@ test('stop is blocked with the next step, then escalates after the cap', async (
 test('reviewer must return a JSON verdict; high findings mean changes requested', async () => {
   const t = setup()
   await t.start()
+  await t.hook('subagent-start', { agent_type: 'seaworthy:reviewer' })
   let r = await t.hook('subagent-stop', { agent_type: 'seaworthy:reviewer', last_assistant_message: 'All good!' })
   assert.equal(r.json?.decision, 'block')
   r = await t.hook('subagent-stop', {
@@ -206,4 +207,16 @@ test('works when the repository is reached through a symlink', async () => {
   const c = captureIO(link, '', t.env)
   assert.equal(await main(['state', '--json'], c.io), 0, c.err())
   assert.equal(JSON.parse(c.out()).session_id, 'session-1')
+})
+
+test('a verdict for code that changed during the review is ignored', async () => {
+  const t = setup()
+  await t.start()
+  const r = await t.hook('subagent-start', { agent_type: 'seaworthy:reviewer' })
+  assert.match(r.json.hookSpecificOutput.additionalContext, /base sha: [0-9a-f]{40}/)
+  writeFileSync(join(t.dir, 'src/a.txt'), 'ok\nchanged during review\n')
+  await t.hook('subagent-stop', { agent_type: 'seaworthy:reviewer', last_assistant_message: '{"verdict":"approve","findings":[]}' })
+  assert.equal(JSON.parse((await t.cli(['state', '--json'])).out).review, null)
+  await t.hook('subagent-stop', { agent_type: 'seaworthy:reviewer', last_assistant_message: '{"verdict":"approve","findings":[]}' })
+  assert.equal(JSON.parse((await t.cli(['state', '--json'])).out).review, null, 'a stop without a start is ignored')
 })

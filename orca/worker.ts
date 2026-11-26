@@ -145,7 +145,11 @@ export default async function activate(orca: Orca) {
     if (!ctx) return next(event)
     const res = await preToolUse(ctx)
     const out = res.stdout ? JSON.parse(res.stdout) : null
-    if (out?.hookSpecificOutput?.permissionDecision === 'deny') return { deny: out.hookSpecificOutput.permissionDecisionReason }
+    const decision = out?.hookSpecificOutput?.permissionDecision
+    if (decision === 'deny') return { deny: out.hookSpecificOutput.permissionDecisionReason }
+    // Orca cannot show seaworthy's approval prompt, so approvals must come from the developer's own terminal.
+    if (decision === 'ask' && /request-approval/.test(String(event.input?.command ?? '')))
+      return { deny: 'seaworthy: approvals cannot be granted from inside Orca; the developer can run `seaworthy approve <id>` in a terminal' }
     return next(event)
   })
 

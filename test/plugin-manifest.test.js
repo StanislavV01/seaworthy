@@ -28,7 +28,7 @@ test('every hook command targets an existing hook handler, wrapped in "hooks"', 
   const h = read(join(PLUGIN, 'hooks', 'hooks.json'))
   assert.ok(h.hooks, 'hooks.json must wrap the event map in a top-level "hooks" key')
   const events = Object.keys(h.hooks)
-  assert.deepEqual(events.sort(), ['PostToolUse', 'PreToolUse', 'SessionStart', 'Stop', 'SubagentStop', 'UserPromptSubmit'])
+  assert.deepEqual(events.sort(), ['PostToolUse', 'PreToolUse', 'SessionStart', 'Stop', 'SubagentStart', 'SubagentStop', 'UserPromptSubmit'])
   for (const ev of events)
     for (const group of h.hooks[ev])
       for (const hook of group.hooks) {

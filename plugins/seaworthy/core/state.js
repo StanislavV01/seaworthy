@@ -28,6 +28,7 @@ import { getKey, markerPath, sign, verify } from './integrity.js'
  *   checks: Partial<Record<Tier, CheckResult>>,
  *   review: Review | null,
  *   review_rounds: number,
+ *   review_started_tree?: string | null,
  *   approvals: Record<string, { reason: string, at: string, by: 'human' }>,
  *   approval_requests: Record<string, { at: string }>,
  *   force_push_allowed: boolean,
