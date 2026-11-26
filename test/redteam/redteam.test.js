@@ -267,3 +267,49 @@ test('red-team (review): another Claude Code session in the same worktree is sti
   const r = await t.hook('pre-tool-use', { session_id: 'other-session', tool_name: 'Bash', tool_input: { command: 'git commit -am x' } })
   assert.equal(decision(r), 'deny')
 })
+
+/** Everyday commands that must keep working during a session (false-positive guard). */
+const EVERYDAY = [
+  'git status && git diff --stat',
+  'git add -A',
+  'find . -not -path "./.git/*" -name "*.js" -exec grep -l foo {} \;',
+  'chmod +x scripts/*',
+  'rm -rf dist/*',
+  'rm -rf *.log',
+  'git restore .',
+  'git checkout -- src/a.txt',
+  'npm test',
+  'npm run lint',
+  'npx eslint .',
+  'node --version',
+  'gh pr create --title "feat: x" --body "$(cat <<\'EOF\'\nWe don\'t push to main.\nEOF\n)"',
+  'seaworthy check --tier commit',
+  'seaworthy guard',
+  'seaworthy status',
+  'git log --oneline -5',
+  'cat src/a.txt | grep ok',
+  'ls -la .github',
+]
+
+for (const cmd of EVERYDAY) {
+  test(`everyday command allowed: ${cmd.split('\n')[0]}`, async () => {
+    const t = await redSession()
+    writeFileSync(join(t.dir, 'package.json'), '{"scripts":{"lint":"true","test":"true"}}')
+    const { execFileSync } = await import('node:child_process')
+    execFileSync('git', ['add', 'package.json'], { cwd: t.dir })
+    execFileSync('git', ['-c', 'core.hooksPath=/dev/null', 'commit', '-qm', 'pkg'], { cwd: t.dir })
+    await t.cli(['stop'])
+    await t.start()
+    const r = await t.bash(cmd)
+    assert.equal(r.out, '', `${cmd}\n${reason(r)}`)
+  })
+}
+
+test('everyday: the Claude Code commit idiom passes the analyzer and reaches the commit gate', async () => {
+  const t = await redSession()
+  writeFileSync(join(t.dir, 'src/a.txt'), 'ok\nmore\n')
+  await t.cli(['check', '--tier', 'commit'])
+  await t.approve()
+  const r = await t.bash('git commit -am "$(cat <<\'EOF\'\nfeat: add more\n\nIt\'s needed.\nEOF\n)"')
+  assert.equal(r.out, '', reason(r))
+})
