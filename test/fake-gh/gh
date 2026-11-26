@@ -1,0 +1,25 @@
+#!/usr/bin/env node
+// Fake GitHub CLI driven by a scenario file: { runs: [[...], [...]], watch: 0, logFailed: "...", pr: null|"url" }
+// `runs` is consumed one entry per `run list` call (the last entry repeats).
+import { readFileSync, writeFileSync, existsSync, appendFileSync } from 'node:fs'
+const file = process.env.FAKE_GH_SCENARIO
+if (!file) { console.error('no scenario'); process.exit(2) }
+const sc = JSON.parse(readFileSync(file, 'utf8'))
+const counter = file + '.n'
+appendFileSync(file + '.calls', process.argv.slice(2).join(' ') + '\n')
+const args = process.argv.slice(2)
+const [a, b] = args
+if (sc.unauth) { console.error('To get started with GitHub CLI, please run:  gh auth login'); process.exit(4) }
+if (a === 'run' && b === 'list') {
+  const n = existsSync(counter) ? Number(readFileSync(counter, 'utf8')) : 0
+  writeFileSync(counter, String(n + 1))
+  const runs = sc.runs[Math.min(n, sc.runs.length - 1)]
+  process.stdout.write(JSON.stringify(runs))
+  process.exit(0)
+}
+if (a === 'run' && b === 'watch') { if (sc.watchError) { console.error('HTTP 403: Resource not accessible by personal access token'); process.exit(1) } process.exit(sc.watch ?? 0) }
+if (a === 'run' && b === 'view') { process.stdout.write(sc.logFailed ?? ''); process.exit(0) }
+if (a === 'run' && b === 'rerun') { process.exit(0) }
+if (a === 'pr' && b === 'view') { if (sc.pr) { process.stdout.write(sc.pr + '\n'); process.exit(0) } console.error('no pull requests found'); process.exit(1) }
+if (a === 'pr' && b === 'create') { process.stdout.write('https://github.com/o/r/pull/7\n'); process.exit(0) }
+console.error('fake gh: unsupported ' + args.join(' ')); process.exit(2)

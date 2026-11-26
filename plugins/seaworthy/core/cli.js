@@ -18,6 +18,7 @@ export const COMMANDS = {
   detect: { summary: 'Print detected project config', load: () => import('./commands/detect.js') },
   check: { summary: 'Run checks for a tier and record the result', load: () => import('./commands/check.js') },
   guard: { summary: 'Scan session changes for test tampering', load: () => import('./commands/guard.js') },
+  ci: { summary: 'Watch CI for HEAD / show the failure excerpt', load: () => import('./commands/ci.js') },
   githook: { summary: 'Git hook entry point (backstop)', load: () => import('./commands/githook.js') },
   hook: { summary: 'Claude Code hook entry point', load: () => import('./commands/hook.js') },
   state: { summary: 'Print raw session state', load: () => import('./commands/state.js') },
