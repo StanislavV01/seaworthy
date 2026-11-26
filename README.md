@@ -11,8 +11,8 @@ is green — enforced by hooks and git hooks the agent cannot talk its way aroun
 A **Claude Code plugin** and an **[Orca](https://github.com/stablyai/orca) extension**, sharing one
 zero-dependency core.
 
-![tests](https://img.shields.io/badge/tests-232_passing-3fb950?style=flat)
-![red-team](https://img.shields.io/badge/red--team-57_bypasses_blocked-6366F1?style=flat)
+![tests](https://img.shields.io/badge/tests-282_passing-3fb950?style=flat)
+![red-team](https://img.shields.io/badge/red--team-81_bypasses_blocked-6366F1?style=flat)
 ![deps](https://img.shields.io/badge/runtime_deps-0-blue?style=flat)
 ![License](https://img.shields.io/badge/license-MIT-blue?style=flat)
 
@@ -36,9 +36,9 @@ a suggestion. **seaworthy turns it into a gate.**
 
 | Step | Enforced by |
 |---|---|
-| Your own `lint`, `typecheck`, `test` (and `build` before push) must be green **for the exact code being committed** | PreToolUse hook + git `pre-commit` |
+| Your own `lint`, `typecheck`, `test` (and `build` before push) must be green **for the exact working tree**, and only that exact `HEAD` can be pushed | PreToolUse hook + git `pre-commit` / `pre-push` |
 | Deleted tests, `.skip`/`.only`, `@ts-ignore`/`eslint-disable`, loosened `tsconfig`, edited test/CI config → blocked until **you** approve | diff-guard |
-| An independent reviewer (fresh context, read-only) must approve **the same code** | SubagentStop hook |
+| A separate reviewer agent (fresh context, given the real base and file list by a hook) must approve **the same code**, unchanged while it reviewed | SubagentStart / SubagentStop hooks |
 | Commits look like yours: your git identity, no `Co-Authored-By` or other trailers the repo does not use | PreToolUse + git `commit-msg` |
 | No push to the default branch, no force push, no pushing code other than what was checked | PreToolUse + git `pre-push` |
 | CI watched with `gh`, failures excerpted (secrets redacted), fixed and re-pushed within caps | `seaworthy ci watch` |
@@ -104,13 +104,18 @@ flowchart TB
   fingerprint of the whole working tree (`git write-tree` on a throwaway index). Change one byte
   afterwards and both are void.
 - **Signed state.** The session state lives in `.git/seaworthy/state.json`, HMAC-signed with a
-  per-machine key outside the repo, plus an out-of-repo marker. Editing it, replaying an old copy or
-  deleting it freezes every git write until you run `seaworthy stop`.
+  per-machine key outside the repo, plus an out-of-repo marker. Editing it by hand, replaying an old
+  copy or deleting it freezes every git write until you run `seaworthy stop`. The agent's Bash cannot
+  read the key, seaworthy's code or the core copy git hooks run.
 - **A shell analyzer, not a regex.** Every Bash command is tokenized (quotes, `$(…)`, backticks,
-  here-docs, `sh -c`, `eval`, `xargs`, `find -exec`, aliases, `git -c`/`-C`, ANSI-C strings) so
-  `sh -c "git commit"` is seen for what it is. What it cannot read with confidence, it refuses.
-- **A git-level backstop.** If something slips past Claude Code entirely (a script, another tool),
-  git itself re-checks the same gates during a session.
+  here-docs, `sh -c`, `eval`, `xargs`, `find -exec`, aliases, `git -c`/`-C`, `GIT_*` and
+  `NODE_OPTIONS` environment, ANSI-C strings) so `sh -c "git commit"` is seen for what it is. What it
+  cannot read with confidence, it refuses.
+- **No scripts written during the session.** The agent may run project files and installed tools,
+  but not a script (or `package.json` script) it created or changed during the session — that closes
+  "write a helper that does the forbidden thing".
+- **A git-level backstop.** If a commit or push reaches git some other way during a session, git's
+  own hooks re-check the same gates.
 
 ## Threat model (honest version)
 
@@ -118,15 +123,25 @@ seaworthy treats the agent **as an adversary inside the session**: it may try to
 swap a check for `true`, approve its own guard events, commit through wrappers, or delete the test
 that fails. Each of those is blocked or detected — see the red-team suite below.
 
-It is **not a sandbox**. An agent running with your OS permissions can always do damage outside
-what seaworthy watches (for example, delete the whole repository). For real isolation, run agents
-in a container or an Orca VM recipe. Do not run sessions with permission prompts disabled:
-approvals of guard events happen at Claude Code's permission prompt.
+It is **not a sandbox**, and here is exactly where it stops:
+
+- seaworthy sees what goes through Claude Code's tools. A program running as you outside that path
+  (another tool, an MCP server, a process started earlier) can read the key and bypass the git hooks
+  with plumbing such as `git commit --no-verify`. With your OS permissions, enough determination
+  always wins locally.
+- The commit gate checks the whole working tree, so an intermediate commit of a partial stage is not
+  checked on its own; the pushed `HEAD` always is.
+- **CI is the ground truth.** seaworthy watches GitHub's result, which the agent cannot fake, and
+  protects the workflow files from edits. Pair it with branch protection and required checks.
+
+For real isolation, run agents in a container or an Orca VM recipe. Do not run sessions with
+permission prompts disabled: approvals of guard events happen at Claude Code's permission prompt.
 
 ## Red-team results
 
-`test/redteam/` runs 57 bypass attempts against a session whose code is red. All are blocked or
-detected (CI runs them on every push):
+`test/redteam/` runs 81 bypass attempts against a session whose code is red — the original 57 plus
+24 found by an independent review — and 20 everyday commands that must keep working. All attempts
+are blocked or detected (CI runs them on every push):
 
 | Category | Attempts | Examples |
 |---|---|---|
@@ -136,6 +151,7 @@ detected (CI runs them on every push):
 | Around Claude Code entirely | 3 | commit / push from a script, trailer smuggled via `-F` |
 | Test & check weakening | 6 | delete the failing test, `it.skip` stub, remove a case, `@ts-nocheck`, fake `test` script, `strict: false` |
 | State forgery | 3 | forge green, replay an older signed state, delete the state |
+| Found in review | 24 | git aliases via `GIT_CONFIG_*`, `GIT_AUTHOR_NAME`, `export GIT_DIR`, `PATH`/`NODE_OPTIONS` shadowing the checks, running seaworthy's core copy or a copy of it, scripts written outside or inside the repo (incl. in the same command), `npm run` of a new script, symlinks and case tricks into `.git`, abbreviated `--auth`/`--no-veri`, `push --no-verify` to `heads/main`, `--force-with-lease`, pushing a stash commit, `git config set`/`--unset`, two approvals behind one prompt, reading the key, another Claude session in the same worktree |
 
 ## Configuration — `.seaworthy.json`
 
@@ -191,7 +207,7 @@ Add to Claude Code's `settings.json` (adjust the path):
 
 ```bash
 npm install
-npm test           # 232 tests: unit, hooks, git hooks, CI (fake gh), Orca worker (fake Orca), red-team
+npm test           # 282 tests: unit, hooks, git hooks, CI (fake gh), Orca worker (fake Orca), red-team
 npm run typecheck  # tsc --checkJs over the JS core
 ```
 
