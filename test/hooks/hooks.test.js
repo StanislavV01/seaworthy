@@ -169,3 +169,14 @@ test('session start re-injects state after compaction', async () => {
   const r = await t.hook('session-start', { source: 'compact' })
   assert.match(r.json.hookSpecificOutput.additionalContext, /seaworthy session in progress/)
 })
+
+test('claim (run by the skill) starts once and never resets the start snapshot', async () => {
+  const t = setup()
+  assert.match((await t.cli(['claim', '--session', 'session-1', '--', 'add', 'x'])).out, /session started/)
+  const first = JSON.parse((await t.cli(['state', '--json'])).out).start_tree
+  writeFileSync(join(t.dir, 'src/a.test.js'), "it('a', () => {})\n")
+  assert.match((await t.cli(['claim', '--session', 'session-1'])).out, /session active/)
+  assert.match((await t.cli(['claim', '--session', 'other'])).out, /resumed/)
+  assert.equal(JSON.parse((await t.cli(['state', '--json'])).out).start_tree, first)
+  assert.match((await t.cli(['claim', '--session', '${CLAUDE_SESSION_ID}'])).out, /no Claude Code session id/)
+})

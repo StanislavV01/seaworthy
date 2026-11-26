@@ -2,11 +2,11 @@
 import { isAbsolute, relative, resolve } from 'node:path'
 import { analyzeCommand, hardViolations, isProtectedPath } from '../bash-analyzer.js'
 import { isGreen, lintFiles } from '../checks.js'
-import { configHash } from '../config.js'
 import { commitGate, pushGate } from '../gates.js'
-import { currentBranch, git, headSha, treeFingerprint } from '../git.js'
+import { git, headSha, treeFingerprint } from '../git.js'
 import { openEvents, scanGuard } from '../guard.js'
-import { isTerminal, logEvent, newState, saveState } from '../state.js'
+import { isTerminal, logEvent, saveState } from '../state.js'
+import { startOrResume } from '../session.js'
 import { ask, block, context, deny, extraProtected, gitAliases, json, PASS } from './context.js'
 
 /** @typedef {import('./context.js').HookContext} Ctx */
@@ -27,37 +27,8 @@ export async function userPromptSubmit(ctx) {
     return context('UserPromptSubmit', `seaworthy: the session state was tampered with (${ctx.tampered}). Do not continue the task. Tell the developer to inspect the repo and run \`seaworthy stop\` in their own terminal.`)
   if (!ctx.cfg) return context('UserPromptSubmit', 'seaworthy: no .seaworthy.json in this repository. Tell the developer to run /seaworthy:init first; do not start the loop.')
   if (!ctx.input.session_id) return PASS
-
-  const rest = m[1].trim()
-  const autonomy = /(^|\s)--auto\b/.test(rest) ? 'auto' : /(^|\s)--careful\b/.test(rest) ? 'careful' : ctx.cfg.autonomy
-  const task = rest.replace(/(^|\s)--(auto|careful)\b/g, ' ').trim()
-
-  const prev = ctx.state
-  if (prev && !['done', 'stopped', 'escalated'].includes(prev.phase)) {
-    prev.session_id = ctx.input.session_id
-    if (prev.phase === 'waiting_ci') prev.phase = 'ci'
-    if (task) prev.task = task
-    prev.counters.stop_blocks = 0
-    logEvent(prev, 'resume', `resumed by /seaworthy:ship in session ${ctx.input.session_id}`)
-    await saveState(ctx.root, ctx.env, prev)
-    return context('UserPromptSubmit', `seaworthy: resumed the session for "${prev.task || '(finish existing work)'}" at phase ${prev.phase}. Continue the loop from there.`)
-  }
-
-  const state = newState({
-    sessionId: ctx.input.session_id,
-    task,
-    autonomy,
-    branch: await currentBranch(ctx.root),
-    baseSha: await headSha(ctx.root),
-    startTree: await treeFingerprint(ctx.root),
-    configHash: configHash(ctx.cfg),
-  })
-  logEvent(state, 'start', `autonomy ${autonomy}`)
-  await saveState(ctx.root, ctx.env, state)
-  return context(
-    'UserPromptSubmit',
-    `seaworthy: session started (autonomy: ${autonomy}). Task: ${task || 'finish the developer’s existing uncommitted work'}. Gates are active: commits need green \`seaworthy check --tier commit\`, an approved seaworthy:reviewer verdict for the same code, and no open guard events; pushes need \`--tier push\`.`,
-  )
+  const msg = await startOrResume({ root: ctx.root, env: ctx.env, cfg: ctx.cfg, state: ctx.state, sessionId: ctx.input.session_id, raw: m[1] })
+  return context('UserPromptSubmit', msg)
 }
 
 /**

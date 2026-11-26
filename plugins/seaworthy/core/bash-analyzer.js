@@ -29,7 +29,7 @@ const INTERPRETERS = new Set(['python', 'python3', 'python2', 'node', 'nodejs', 
 const INLINE_CODE_FLAGS = new Set(['-c', '-e', '-E', '-p', '-r', '--eval', '--print', '--command', '-Command'])
 const WRAPPERS = new Set(['env', 'command', 'builtin', 'exec', 'nohup', 'time', 'sudo', 'doas', 'nice', 'ionice', 'timeout', 'stdbuf', 'chronic', 'unbuffer', 'caffeinate', 'script', 'watch', 'flock', 'setsid', 'npx', 'pnpx', 'bunx'])
 const RESERVED = new Set(['{', '}', '!', 'if', 'then', 'else', 'elif', 'fi', 'do', 'done', 'while', 'until', 'for', 'case', 'esac', 'in', 'select', 'function', '[[', ']]'])
-const HUMAN_ONLY = new Set(['approve', 'waive', 'stop', 'allow-force-push'])
+const HUMAN_ONLY = new Set(['approve', 'waive', 'stop', 'allow-force-push', 'claim', 'githook', 'hook'])
 
 /** Commands that destroy or overwrite every path argument. */
 const WRITE_ALL_ARGS = new Set(['rm', 'rmdir', 'unlink', 'truncate', 'chmod', 'chown', 'chgrp', 'touch', 'tee', 'shred', 'mv', 'chattr', 'setfacl', 'xattr'])

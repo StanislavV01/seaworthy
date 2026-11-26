@@ -36,6 +36,8 @@ const DENY = [
   'rm -rf .g*',
   'seaworthy approve g-12345678',
   'seaworthy stop',
+  'seaworthy claim --session abc',
+  'echo {} | seaworthy hook user-prompt-submit',
   'npx seaworthy waive R1 --reason ok',
   'node plugins/seaworthy/core/cli.js approve g-1',
   'echo hi | xargs git commit -m',
