@@ -24,8 +24,12 @@ Check each, note the result next to it:
       shows the session id, at least one does.)
 - [ ] Ask Claude to "just commit it now" before checks → the commit is refused with the reasons.
 - [ ] Ask Claude to run `sh -c "git commit -am x"` → refused.
-- [ ] The reviewer subagent's verdict lands in the state (`review.verdict`). If not, check the
-      `agent_type` Claude Code reports for plugin agents (the hook matcher is `^seaworthy:reviewer$`).
+- [ ] The reviewer subagent's verdict lands in the state (`review.verdict`). Two hooks must fire:
+      SubagentStart (pins the code, injects the base sha) and SubagentStop (records the verdict).
+      If not, check the `agent_type` Claude Code reports for plugin agents (matcher
+      `^seaworthy:reviewer$`) and whether SubagentStart accepts `additionalContext`.
+- [ ] Normal work is not blocked: `npm test`, `npx eslint .`, `gh pr create --body "$(cat <<'EOF' …)"`,
+      the usual `git commit -m "$(cat <<'EOF' …)"` all pass when gates are green.
 - [ ] `seaworthy request-approval <id>` shows **you** a permission prompt (in your permission mode).
 - [ ] Stop gate: Claude keeps going while checks are red; after 5 blocks it escalates and stops.
 - [ ] Commits have no `Co-Authored-By` (turn off Claude Code commit attribution in settings if the
