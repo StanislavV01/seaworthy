@@ -18,6 +18,13 @@ export const COMMANDS = {
   detect: { summary: 'Print detected project config', load: () => import('./commands/detect.js') },
   check: { summary: 'Run checks for a tier and record the result', load: () => import('./commands/check.js') },
   guard: { summary: 'Scan session changes for test tampering', load: () => import('./commands/guard.js') },
+  hook: { summary: 'Claude Code hook entry point', load: () => import('./commands/hook.js') },
+  state: { summary: 'Print raw session state', load: () => import('./commands/state.js') },
+  stop: { summary: 'End the session (developer only)', load: () => import('./commands/stop.js') },
+  approve: { summary: 'Approve a guard event (developer only)', load: () => import('./commands/approve.js') },
+  waive: { summary: 'Waive a review finding (developer only)', load: () => import('./commands/approve.js') },
+  'request-approval': { summary: 'Ask the developer to approve a guard event or finding', load: () => import('./commands/request-approval.js') },
+  'allow-force-push': { summary: 'Allow one --force-with-lease push (developer only)', load: () => import('./commands/allow-force-push.js') },
 }
 
 export function usage() {

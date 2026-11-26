@@ -75,7 +75,7 @@ export function captureIO(cwd, stdinText = '', env = {}) {
       stdout: { write: (/** @type {string} */ s) => (out += s) },
       stderr: { write: (/** @type {string} */ s) => (err += s) },
       cwd,
-      env: { ...process.env, SEAWORTHY_KEY_DIR: join(cwd, '..', `.swkey-${Date.now()}-${Math.random()}`), ...env },
+      env: { ...process.env, SEAWORTHY_KEY_DIR: join(cwd, '..', `.swkey-${Date.now()}-${Math.random()}`), CLAUDE_PLUGIN_ROOT: undefined, ...env },
     },
     out: () => out,
     err: () => err,
