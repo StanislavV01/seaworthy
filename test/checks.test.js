@@ -80,3 +80,12 @@ test('lintFiles uses perFile command only when configured', async () => {
   assert.equal(r.ran, true)
   assert.match(r.output, /a b.txt/)
 })
+
+test('checks run without preload variables or temp-dir PATH entries', async () => {
+  const { checkEnv } = await import('../plugins/seaworthy/core/checks.js')
+  const e = checkEnv({ PATH: '/tmp/fake:/usr/bin:/bin', NODE_OPTIONS: '--require=/tmp/x.cjs', GIT_DIR: '/x', HOME: '/h' })
+  assert.equal(e.PATH, '/usr/bin:/bin')
+  assert.equal(e.NODE_OPTIONS, undefined)
+  assert.equal(e.GIT_DIR, undefined)
+  assert.equal(e.HOME, '/h')
+})

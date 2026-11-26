@@ -69,6 +69,8 @@ export async function run(args, io) {
         reasons.push(`deleting ${remoteRef} is not allowed during a session`)
         continue
       }
+      const head = (await git(root, ['rev-parse', 'HEAD'])).stdout.trim()
+      if (localSha !== head) reasons.push(`only the checked HEAD can be pushed (${localRef} is not HEAD)`)
       const branch = remoteRef.replace(/^refs\/heads\//, '')
       if (!ZERO.test(remoteSha)) {
         const anc = await git(root, ['merge-base', '--is-ancestor', remoteSha, localSha])

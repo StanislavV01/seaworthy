@@ -180,3 +180,30 @@ test('claim (run by the skill) starts once and never resets the start snapshot',
   assert.equal(JSON.parse((await t.cli(['state', '--json'])).out).start_tree, first)
   assert.match((await t.cli(['claim', '--session', '${CLAUDE_SESSION_ID}'])).out, /no Claude Code session id/)
 })
+
+test('re-starting after escalation keeps the start snapshot (guard history survives)', async () => {
+  const t = setup()
+  await t.start()
+  const first = JSON.parse((await t.cli(['state', '--json'])).out).start_tree
+  rmSync(join(t.dir, 'src/a.test.js'))
+  for (let i = 0; i < 6; i++) await t.hook('stop', {})
+  assert.equal(JSON.parse((await t.cli(['state', '--json'])).out).phase, 'escalated')
+  await t.start('/seaworthy:ship continue')
+  const s = JSON.parse((await t.cli(['state', '--json'])).out)
+  assert.equal(s.start_tree, first)
+  assert.equal(s.phase, 'implement')
+  assert.match((await t.cli(['guard'])).out, /test_deleted/)
+})
+
+test('works when the repository is reached through a symlink', async () => {
+  const t = setup()
+  const { symlinkSync } = await import('node:fs')
+  const link = join(t.dir, '..', `link-${Date.now()}`)
+  symlinkSync(t.dir, link)
+  await t.start()
+  const { main } = await import('../../plugins/seaworthy/core/cli.js')
+  const { captureIO } = await import('../helpers.js')
+  const c = captureIO(link, '', t.env)
+  assert.equal(await main(['state', '--json'], c.io), 0, c.err())
+  assert.equal(JSON.parse(c.out()).session_id, 'session-1')
+})

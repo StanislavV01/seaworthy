@@ -10,6 +10,21 @@ import { logEvent, statePaths } from './state.js'
  * @typedef {{ tier: import('./state.js').Tier, tree: string, ok: boolean, failed: string[], logs: Record<string, string>, ran: string[] }} TierResult
  */
 
+const STRIP_ENV = /^(NODE_OPTIONS|NODE_PATH|LD_PRELOAD|LD_LIBRARY_PATH|LD_AUDIT|DYLD_.*|BASH_ENV|ENV|SHELLOPTS|PYTHONPATH|PYTHONSTARTUP|RUBYOPT|PERL5OPT|PERL5LIB|GIT_.*)$/
+
+/**
+ * The environment checks run in: the caller's, minus variables that can preload code or redirect
+ * git, and with PATH entries under temp directories removed.
+ * @param {NodeJS.ProcessEnv} env
+ */
+export function checkEnv(env) {
+  /** @type {Record<string, string>} */
+  const out = {}
+  for (const [k, v] of Object.entries(env)) if (v !== undefined && !STRIP_ENV.test(k)) out[k] = v
+  if (out.PATH) out.PATH = out.PATH.split(':').filter((p) => p && !/^(\/tmp|\/var\/tmp|\/private\/tmp|\/dev\/shm)(\/|$)/.test(p) && p !== '.').join(':')
+  return out
+}
+
 /**
  * Runs a command line through the platform shell and captures combined output.
  * @param {string} cmdline
@@ -20,7 +35,7 @@ import { logEvent, statePaths } from './state.js'
  */
 export function runShell(cmdline, cwd, timeoutMs, env) {
   return new Promise((resolve) => {
-    const child = spawn(cmdline, { cwd, shell: true, env: { ...process.env, CI: '1', FORCE_COLOR: '0', ...env }, stdio: ['ignore', 'pipe', 'pipe'] })
+    const child = spawn(cmdline, { cwd, shell: true, env: { ...checkEnv(process.env), CI: '1', FORCE_COLOR: '0', ...env }, stdio: ['ignore', 'pipe', 'pipe'] })
     let output = ''
     let timedOut = false
     const timer = setTimeout(() => {

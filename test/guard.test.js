@@ -61,7 +61,7 @@ test('config changes', async () => {
   assert.ok(t.includes('config_changed:.github/workflows/ci.yml'))
   assert.ok(t.includes('config_changed:tsconfig.json'))
   const pkg = (await scanGuard(dir, start)).find((e) => e.path === 'package.json')
-  assert.equal(pkg?.detail, 'scripts changed: test')
+  assert.equal(pkg?.detail, 'scripts changed: test, dev')
 })
 
 test('normal code changes and new tests are not flagged', async () => {
@@ -102,4 +102,27 @@ test('guard command exits 1 with open events', async () => {
   const c = captureIO(dir)
   assert.equal(await main(['guard'], c.io), 1)
   assert.match(c.out(), /✗ open\s+g-\w+\s+test_deleted\s+src\/a.test.ts/)
+})
+
+test('review gaps: trivial assertions, dead-code tests, tsconfig scope, jest key, ignore files', async () => {
+  const cases = {
+    'src/a.test.js': TESTS + "it('d', () => { expect(true).toBe(true) })\n",
+    'src/b.test.js': "if (0) { test('x', () => {}) }\n",
+    'tsconfig.json': '{"compilerOptions":{"strict": true}, "exclude": ["src"]}',
+    'package.json': '{"scripts":{"test":"vitest","dev":"vite"},"jest":{"testPathIgnorePatterns":["src"]}}',
+    '.eslintignore': 'src\n',
+  }
+  for (const [file, content] of Object.entries(cases)) {
+    const { dir, start } = await session({})
+    writeFileSync(join(dir, file), content)
+    assert.ok((await scanGuard(dir, start)).length > 0, file)
+  }
+})
+
+test('approval is bound to content: a later rewrite of the same file is a new event', async () => {
+  const { dir, start } = await session({})
+  writeFileSync(join(dir, 'vitest.config.ts'), 'export default { a: 1 }\n')
+  const first = (await scanGuard(dir, start))[0].id
+  writeFileSync(join(dir, 'vitest.config.ts'), 'export default { test: { exclude: ["**"] } }\n')
+  assert.notEqual((await scanGuard(dir, start))[0].id, first)
 })

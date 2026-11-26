@@ -18,6 +18,8 @@ const SKIP_PATTERNS = [
   ['x-prefixed test', /(?<![\w$.])x(?:it|test|describe)\s*\(/g],
   ['pytest skip', /@pytest\.mark\.(?:skip|xfail)\b/g],
   ['t.Skip', /\bt\.Skip(?:Now|f)?\s*\(/g],
+  ['trivial assertion', /expect\(\s*(?:true|1|null|undefined|['"][^'"]*['"])\s*\)\.(?:toBe|toEqual|toStrictEqual|toBeTruthy|toBeDefined)\(\s*(?:true|1|null|undefined|['"][^'"]*['"])?\s*\)|assert(?:\.ok)?\(\s*(?:true|1)\s*\)|assert\.equal\(\s*(\w+)\s*,\s*\1\s*\)/g],
+  ['dead-code test', /if\s*\(\s*(?:0|false)\s*\)\s*\{?\s*(?:it|test|describe)\s*\(/g],
 ]
 
 /** Patterns whose count going up means a check was silenced. */
@@ -38,6 +40,8 @@ const TEST_CASE = /(?<![\w$.])(?:it|test)(?:\.each\s*\([^)]*\)\s*)?\s*\(|(?<![\w
 const CONFIG_FILES = [
   /(^|\/)eslint\.config\.[cm]?[jt]s$/,
   /(^|\/)\.eslintrc(\.\w+)?$/,
+  /(^|\/)\.(eslintignore|prettierignore|mocharc(\.\w+)?|nycrc(\.\w+)?|c8rc(\.\w+)?)$/,
+  /(^|\/)(karma\.conf\.[cm]?[jt]s|ava\.config\.[cm]?[jt]s|Makefile|justfile|Taskfile\.ya?ml)$/,
   /(^|\/)biome\.jsonc?$/,
   /(^|\/)\.oxlintrc(\.json)?$/,
   /(^|\/)(vitest|jest|playwright|cypress|vite)\.config\.[cm]?[jt]s$/,
@@ -51,6 +55,7 @@ const CONFIG_FILES = [
   /^\.seaworthy\.json$/,
 ]
 const TSCONFIG = /(^|\/)tsconfig[^/]*\.json$/
+const TS_SCOPE = /"(include|exclude|files)"\s*:\s*\[[^\]]*\]/g
 const TS_STRICTNESS = /"(strict\w*|noImplicit\w*|noUnused\w*|noUnchecked\w*|exactOptional\w*|noFallthrough\w*|skipLibCheck|checkJs|allowJs|noEmitOnError|useUnknownInCatchVariables)"\s*:\s*[^,\n}]+/g
 
 /** @param {string} text @param {RegExp} re */
@@ -65,8 +70,8 @@ const isBinaryish = (text) => text.includes('\u0000') || text.length > 1_000_000
  * @param {string} detail
  * @returns {GuardEvent}
  */
-function event(type, path, detail) {
-  const id = 'g-' + createHash('sha1').update(`${type}|${path}|${detail}`).digest('hex').slice(0, 8)
+function event(type, path, detail, content = '') {
+  const id = 'g-' + createHash('sha1').update(`${type}|${path}|${detail}|${createHash('sha1').update(content).digest('hex')}`).digest('hex').slice(0, 8)
   return { id, type, path, detail }
 }
 
@@ -104,33 +109,47 @@ export function compareFile(path, before, after) {
   if (isTest) {
     const was = count(old, TEST_CASE)
     const now = count(after, TEST_CASE)
-    if (now < was) out.push(event('test_case_removed', path, `test cases ${was} → ${now}`))
+    if (now < was) out.push(event('test_case_removed', path, `test cases ${was} → ${now}`, after))
   }
   if (CODE_FILE.test(path)) {
     for (const [name, re] of SKIP_PATTERNS) {
       const was = count(old, /** @type {RegExp} */ (re))
       const now = count(after, /** @type {RegExp} */ (re))
-      if (now > was) out.push(event('skip_added', path, `${name} added (${was} → ${now})`))
+      if (now > was) out.push(event('skip_added', path, `${name} added (${was} → ${now})`, after))
     }
     for (const [name, re] of SUPPRESSION_PATTERNS) {
       const was = count(old, /** @type {RegExp} */ (re))
       const now = count(after, /** @type {RegExp} */ (re))
-      if (now > was) out.push(event('suppression_added', path, `${name} added (${was} → ${now})`))
+      if (now > was) out.push(event('suppression_added', path, `${name} added (${was} → ${now})`, after))
     }
   }
-  if (CONFIG_FILES.some((re) => re.test(path)) && before !== after) out.push(event('config_changed', path, before === null ? 'config file added' : 'config file changed'))
+  if (CONFIG_FILES.some((re) => re.test(path)) && before !== after) out.push(event('config_changed', path, before === null ? 'config file added' : 'config file changed', after))
   if (TSCONFIG.test(path)) {
     const a = new Set(old.match(TS_STRICTNESS) ?? [])
     const b = new Set(after.match(TS_STRICTNESS) ?? [])
     const changed = [...a].filter((x) => !b.has(x)).concat([...b].filter((x) => !a.has(x)))
-    if (changed.length) out.push(event('config_changed', path, `compiler strictness changed: ${changed.map((x) => x.replace(/\s+/g, '')).join(', ')}`))
+    if (changed.length) out.push(event('config_changed', path, `compiler strictness changed: ${changed.map((x) => x.replace(/\s+/g, '')).join(', ')}`, after))
+    const sa = (old.match(TS_SCOPE) ?? []).map((x) => x.replace(/\s+/g, '')).join('|')
+    const sb = (after.match(TS_SCOPE) ?? []).map((x) => x.replace(/\s+/g, '')).join('|')
+    if (sa !== sb) out.push(event('config_changed', path, 'compiler include/exclude/files changed', after))
   }
   if (/(^|\/)package\.json$/.test(path)) {
     const a = scriptsOf(before)
     const b = scriptsOf(after)
     const keys = new Set([...Object.keys(a), ...Object.keys(b)])
-    const changed = [...keys].filter((k) => a[k] !== b[k] && /lint|test|type|tsc|check|build|ci|pre/.test(k))
-    if (changed.length) out.push(event('config_changed', path, `scripts changed: ${changed.join(', ')}`))
+    const changed = [...keys].filter((k) => a[k] !== b[k])
+    if (changed.length) out.push(event('config_changed', path, `scripts changed: ${changed.join(', ')}`, JSON.stringify(b)))
+    const toolKeys = ['jest', 'vitest', 'mocha', 'ava', 'c8', 'nyc', 'eslintConfig', 'prettier', 'lint-staged', 'husky']
+    /** @param {string | null} j */
+    const keysOf = (j) => {
+      try {
+        const o = JSON.parse(j ?? '{}')
+        return JSON.stringify(toolKeys.map((k) => o[k] ?? null))
+      } catch {
+        return ''
+      }
+    }
+    if (keysOf(before) !== keysOf(after)) out.push(event('config_changed', path, 'test or lint tool configuration in package.json changed', keysOf(after)))
   }
   return out
 }

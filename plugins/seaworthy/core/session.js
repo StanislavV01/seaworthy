@@ -23,12 +23,16 @@ export function parseShipArgs(raw, fallback) {
 export async function startOrResume(p) {
   const { autonomy, task } = parseShipArgs(p.raw, p.cfg.autonomy)
   const prev = p.state
-  if (prev && !['done', 'stopped', 'escalated'].includes(prev.phase)) {
-    if (prev.session_id === p.sessionId && prev.phase !== 'waiting_ci') {
+  if (prev && !['done', 'stopped'].includes(prev.phase)) {
+    if (prev.session_id === p.sessionId && prev.phase !== 'waiting_ci' && prev.phase !== 'escalated') {
       return `seaworthy: session active (phase ${prev.phase}). Task: ${prev.task || 'finish the existing uncommitted work'}.`
     }
     prev.session_id = p.sessionId
     if (prev.phase === 'waiting_ci') prev.phase = 'ci'
+    if (prev.phase === 'escalated') {
+      prev.phase = 'implement'
+      prev.escalation = null
+    }
     if (task) prev.task = task
     prev.counters.stop_blocks = 0
     logEvent(prev, 'resume', `resumed in session ${p.sessionId}`)

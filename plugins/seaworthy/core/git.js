@@ -1,7 +1,7 @@
 // @ts-check
 import { spawn } from 'node:child_process'
 import { mkdtemp, rm, copyFile } from 'node:fs/promises'
-import { existsSync } from 'node:fs'
+import { existsSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { isAbsolute, join, resolve } from 'node:path'
 
@@ -65,13 +65,24 @@ export async function isGitRepo(cwd) {
 
 /** Absolute path of this worktree's git dir (a linked worktree has its own). @param {string} cwd */
 export async function gitDir(cwd) {
-  const d = await gitOut(cwd, ['rev-parse', '--git-dir'])
-  return isAbsolute(d) ? d : resolve(cwd, d)
+  const r = await git(cwd, ['rev-parse', '--absolute-git-dir'])
+  const d = r.code === 0 ? r.stdout.trim() : await gitOut(cwd, ['rev-parse', '--git-dir'])
+  const abs = isAbsolute(d) ? d : resolve(cwd, d)
+  try {
+    return realpathSync(abs)
+  } catch {
+    return abs
+  }
 }
 
 /** Top level of the working tree. @param {string} cwd */
 export async function topLevel(cwd) {
-  return gitOut(cwd, ['rev-parse', '--show-toplevel'])
+  const t = await gitOut(cwd, ['rev-parse', '--show-toplevel'])
+  try {
+    return realpathSync(t)
+  } catch {
+    return t
+  }
 }
 
 /** @param {string} cwd @returns {Promise<string | null>} */
