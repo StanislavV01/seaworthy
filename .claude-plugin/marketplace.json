@@ -1,0 +1,14 @@
+{
+  "name": "seaworthy",
+  "owner": { "name": "Stanislav", "url": "https://github.com/StanislavV01" },
+  "metadata": { "description": "Deterministic quality gates for coding agents." },
+  "plugins": [
+    {
+      "name": "seaworthy",
+      "source": "./plugins/seaworthy",
+      "description": "Makes \"done\" mean done: checks, tamper guard, independent review, clean commits and green CI, enforced by hooks the agent cannot talk its way around.",
+      "category": "development",
+      "tags": ["quality-gates", "ci", "hooks", "code-review", "safety"]
+    }
+  ]
+}

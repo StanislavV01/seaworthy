@@ -1,0 +1,11 @@
+{
+  "name": "seaworthy",
+  "displayName": "seaworthy",
+  "version": "0.1.0",
+  "description": "Makes \"done\" mean done: runs your project's own checks before commit and push, catches test tampering, gets an independent review, splits clean commits and watches CI until it is green — enforced by hooks and git hooks, not by prompts.",
+  "author": { "name": "Stanislav", "url": "https://github.com/StanislavV01" },
+  "homepage": "https://github.com/StanislavV01/seaworthy",
+  "repository": "https://github.com/StanislavV01/seaworthy",
+  "license": "MIT",
+  "keywords": ["quality-gates", "ci", "hooks", "code-review", "git", "agent-safety"]
+}
