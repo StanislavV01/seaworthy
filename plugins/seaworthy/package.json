@@ -1,0 +1,7 @@
+{
+  "name": "seaworthy",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": { "seaworthy": "bin/seaworthy" }
+}

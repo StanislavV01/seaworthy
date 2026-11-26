@@ -1,0 +1,10 @@
+#!/usr/bin/env node
+import { main, processIO } from '../core/cli.js'
+
+main(process.argv.slice(2), processIO()).then(
+  (code) => process.exit(code),
+  (err) => {
+    process.stderr.write(`seaworthy: ${err instanceof Error ? err.stack || err.message : String(err)}\n`)
+    process.exit(1)
+  },
+)

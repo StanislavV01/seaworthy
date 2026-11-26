@@ -1,0 +1,16 @@
+{
+  "name": "seaworthy-repo",
+  "private": true,
+  "type": "module",
+  "description": "seaworthy: deterministic quality gates for coding agents (Claude Code plugin + Orca extension).",
+  "license": "MIT",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "test": "node --test --test-reporter=spec \"test/**/*.test.js\"",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.0"
+  }
+}
