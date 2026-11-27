@@ -94,6 +94,9 @@ export async function run(args, io) {
       const [, newSha, ref] = line.split(/\s+/)
       if (!ref || !(ref === 'HEAD' || /^refs\/(heads|tags)\//.test(ref))) continue
       if (!newSha || ZERO.test(newSha)) continue // deletions
+      // git ≥ 2.46 also reports symbolic-ref updates (`git switch` moving HEAD to another branch) as
+      // `ref:<target>`. Pointing HEAD at a branch creates no commit; the branch's own update is checked.
+      if (newSha.startsWith('ref:')) continue
       // A commit that is already on a branch, tag or remote-tracking ref is not new code
       // (`git switch -c`, `git branch x`, moving back). The stash is not counted: it holds red trees.
       const fresh = await git(root, ['rev-list', '-n', '1', newSha, '--not', '--branches', '--tags', '--remotes'])

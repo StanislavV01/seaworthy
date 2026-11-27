@@ -384,3 +384,12 @@ test('git backstop: new branches at existing commits and green commits still wor
   assert.equal(r.status, 0, r.stderr)
   assert.notEqual(head(t), before)
 })
+
+test('git backstop: symbolic HEAD updates (git >= 2.46 reports them) are not new commits', async () => {
+  const t = await redSession()
+  const hook = join(t.dir, '.git', 'hooks', 'reference-transaction')
+  const zero = '0'.repeat(40)
+  const lines = `ref:refs/heads/feat/x ref:refs/heads/feat/other HEAD\n${zero} ref:refs/heads/feat/other HEAD\n`
+  const r = spawnSync(hook, ['prepared'], { cwd: t.dir, env: { ...process.env, ...t.env }, input: lines, encoding: 'utf8' })
+  assert.equal(r.status, 0, r.stderr)
+})

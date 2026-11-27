@@ -23,6 +23,8 @@ Claude Code A/B harness) found six bugs in v0.1.0. Details and reproductions: [b
 
 ### Fixed
 
+- On git ≥ 2.46 every `git switch` was refused during a red session: git now reports symbolic HEAD
+  updates (`ref:refs/heads/…`) to the reference-transaction hook, and they were taken for new commits.
 - Python: ruff is detected from `ruff.toml` / `.ruff.toml` or a `ruff` dependency in `pyproject.toml`,
   not only a `[tool.ruff]` table; `mypy.ini` is detected for mypy.
 - The CI cross-check compares what runs, not how it is spelled: local `python3 -m pytest -q` matches
