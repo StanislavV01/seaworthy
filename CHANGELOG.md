@@ -23,6 +23,11 @@ Claude Code A/B harness) found six bugs in v0.1.0. Details and reproductions: [b
 
 ### Fixed
 
+- Python: ruff is detected from `ruff.toml` / `.ruff.toml` or a `ruff` dependency in `pyproject.toml`,
+  not only a `[tool.ruff]` table; `mypy.ini` is detected for mypy.
+- The CI cross-check compares what runs, not how it is spelled: local `python3 -m pytest -q` matches
+  `pytest -q` in CI, `ruff check . && ruff format --check .` matches both CI steps, `pip install` is
+  ignored as setup, and duplicate warnings are shown once.
 - `npm test` was refused in every session when the test script used `node --test '<glob>'` (the
   glob was taken for a missing script). Also `bun test` / `deno test`, `python -m …`, `perl -ne`.
 - With no CI configured, an honest agent could not finish: `ci watch` now records the result for

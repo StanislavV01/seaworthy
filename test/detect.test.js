@@ -81,6 +81,19 @@ test('Go, CMake + CTest and pytest at the root', async () => {
   assert.deepEqual((await detectProject(py)).checks.map((c) => c.cmd), ['ruff check .', 'python3 -m pytest -q'])
 })
 
+test('ruff is found through ruff.toml or a dev dependency, not only [tool.ruff]', async () => {
+  const { writeFiles } = await import('./helpers.js')
+  const own = tmp()
+  writeFiles(own, { 'pyproject.toml': '[project]\nname = "x"\n', 'ruff.toml': 'line-length = 110\n', 'tests/test_a.py': 'import pytest\n' })
+  assert.equal((await detectProject(own)).checks.find((c) => c.id === 'lint')?.cmd, 'ruff check .')
+  const dep = tmp()
+  writeFiles(dep, { 'pyproject.toml': '[project.optional-dependencies]\ndev = ["pytest", "ruff>=0.6"]\n', 'tests/test_a.py': 'import pytest\n' })
+  assert.equal((await detectProject(dep)).checks.find((c) => c.id === 'lint')?.cmd, 'ruff check .')
+  const none = tmp()
+  writeFiles(none, { 'pyproject.toml': '[project]\nname = "truffle"\n', 'tests/test_a.py': 'import pytest\n' })
+  assert.equal((await detectProject(none)).checks.find((c) => c.id === 'lint'), undefined)
+})
+
 test('per-file lint command for known linters', async () => {
   const p = await fx('pnpm')
   assert.equal(p.checks[0].perFile, 'pnpm exec eslint {files}')

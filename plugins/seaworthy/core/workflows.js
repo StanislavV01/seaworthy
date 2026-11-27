@@ -143,23 +143,55 @@ export function ciRunsOnPush(workflows, branch) {
 /** @param {Workflow[]} workflows */
 export const hasPullRequestCi = (workflows) => workflows.some((w) => w.pullRequest)
 
-const SETUP = /^(npm (ci|install|i)\b|pnpm (install|i)\b|yarn( install)?$|bun install|npx playwright install|corepack|git |echo |cd )/
-const CHECKISH = /\b(lint|test|typecheck|type-check|tsc|build|vitest|jest|eslint|biome|oxlint)\b/
+const SETUP = /^(npm (ci|install|i)\b|pnpm (install|i)\b|yarn( install)?$|bun install|npx playwright install|corepack|git |echo |cd |(python3? -m )?pip3? install|uv (sync|pip)|poetry install)/
+const CHECKISH = /\b(lint|test|typecheck|type-check|tsc|build|vitest|jest|eslint|biome|oxlint|pytest|unittest|ruff|mypy|pyright|flake8|ctest|golangci-lint|clippy)\b/
+// Tools whose first argument is a subcommand that says what runs (`ruff check` vs `ruff format`).
+const SUBCOMMAND_TOOLS = new Set(['ruff', 'go', 'cargo', 'make', 'deno', 'dotnet', 'swift'])
+
+/**
+ * What a shell command runs, ignoring wrappers and flags: `python3 -m pytest -q` and `pytest` both give
+ * `pytest`; `ruff check .` gives `ruff check`. One key per `&&`/`||`/`;` segment.
+ * @param {string} cmd
+ * @returns {string[]}
+ */
+export function commandKeys(cmd) {
+  /** @type {string[]} */
+  const keys = []
+  for (const seg of cmd.replace(/[()]/g, ' ').split(/&&|\|\||;|\|/)) {
+    const words = seg.trim().split(/\s+/).filter(Boolean)
+    while (words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0])) words.shift()
+    for (;;) {
+      if (/^python(\d(\.\d+)?)?$/.test(words[0] ?? '') && words[1] === '-m') words.splice(0, 2)
+      else if (['uv', 'poetry', 'pdm', 'hatch', 'pipx'].includes(words[0] ?? '') && words[1] === 'run') words.splice(0, 2)
+      else if (['npx', 'bunx', 'exec'].includes(words[0] ?? '')) words.splice(0, 1)
+      else break
+    }
+    const [tool, sub] = words
+    if (!tool || tool === 'cd') continue
+    keys.push(SUBCOMMAND_TOOLS.has(tool) && sub && /^[a-z][\w-]*$/.test(sub) ? `${tool} ${sub}` : tool)
+  }
+  return keys
+}
 
 /**
  * @param {string} step
- * @param {{ id: string, script: string }} check
+ * @param {{ id: string, script: string, cmd?: string }} check
  */
 function stepRunsCheck(step, check) {
   const s = check.script.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   if (new RegExp(`\\b(npm|pnpm|yarn|bun)\\s+(run\\s+)?${s}\\b`).test(step)) return true
   if (check.id === 'test' && /\b(npm|pnpm|yarn|bun)\s+t(est)?\b/.test(step)) return true
+  // Commands that are not package scripts (pytest, ruff, go test, make): compare what actually runs.
+  if (check.cmd && !/^(npm|pnpm|yarn|bun) run /.test(check.cmd)) {
+    const stepKeys = new Set(commandKeys(step))
+    return commandKeys(check.cmd).some((k) => stepKeys.has(k))
+  }
   return false
 }
 
 /**
  * Warnings about drift between local checks and CI steps.
- * @param {{ checks: { id: string, script: string }[] }} config
+ * @param {{ checks: { id: string, script: string, cmd?: string }[] }} config
  * @param {Workflow[]} workflows
  * @returns {string[]}
  */
@@ -175,5 +207,5 @@ export function crossCheck(config, workflows) {
   for (const c of config.checks) {
     if (!steps.some((s) => stepRunsCheck(s, c))) warnings.push(`local check ${c.id} (\`${c.script}\`) does not run in CI`)
   }
-  return warnings
+  return [...new Set(warnings)]
 }

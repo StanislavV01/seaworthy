@@ -156,8 +156,10 @@ async function componentChecks(dir) {
     for (const f of pyTests.slice(0, 20)) if (/^\s*import pytest|^\s*from pytest/m.test(await readFile(join(dir, testsDir ?? '', f), 'utf8'))) usesPytest = true
     if (existsSync(join(dir, 'pyproject.toml')) && /\[tool\.pytest/.test(await readFile(join(dir, 'pyproject.toml'), 'utf8'))) usesPytest = true
     c.test = usesPytest ? 'python3 -m pytest -q' : `python3 -m unittest discover -s ${testsDir ?? '.'}`
-    if (existsSync(join(dir, 'pyproject.toml')) && /\[tool\.ruff/.test(await readFile(join(dir, 'pyproject.toml'), 'utf8'))) c.lint = 'ruff check .'
-    if (existsSync(join(dir, 'pyproject.toml')) && /\[tool\.mypy/.test(await readFile(join(dir, 'pyproject.toml'), 'utf8'))) c.typecheck = 'mypy .'
+    const pyproject = existsSync(join(dir, 'pyproject.toml')) ? await readFile(join(dir, 'pyproject.toml'), 'utf8') : ''
+    // ruff: its own config file, a [tool.ruff] table, or ruff listed as a (dev) dependency
+    if (existsSync(join(dir, 'ruff.toml')) || existsSync(join(dir, '.ruff.toml')) || /\[tool\.ruff|["'\s]ruff\b/.test(pyproject)) c.lint = 'ruff check .'
+    if (existsSync(join(dir, 'mypy.ini')) || existsSync(join(dir, '.mypy.ini')) || /\[tool\.mypy/.test(pyproject)) c.typecheck = 'mypy .'
     return c
   }
   return null
